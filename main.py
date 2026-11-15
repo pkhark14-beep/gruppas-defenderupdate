@@ -2,6 +2,7 @@ import os
 import sqlite3
 import logging
 import asyncio
+import time
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -83,7 +84,6 @@ def get_chat_config(chat_id: int, user_id: int):
     
     chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
     if not chat:
-        # Автоматически создаем тестовый чат, если его не было в базе (для удобства тестирования)
         cur.execute("""
             INSERT OR REPLACE INTO chats (chat_id, title, owner_id, currency_name, ai_enabled, is_configured)
             VALUES (?, ?, ?, 'G-Coins', 1, 0)
@@ -105,7 +105,6 @@ def save_chat_setup(data: ChatSetupModel):
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     
-    # Проверяем, есть ли чат, если нет — создаем
     chat = cur.execute("SELECT owner_id FROM chats WHERE chat_id = ?", (data.chat_id,)).fetchone()
     if not chat:
         cur.execute("""
@@ -166,7 +165,8 @@ async def cmd_start_deeplink(message: types.Message, command: CommandObject):
     args = command.args
     if args and args.startswith("setup_"):
         chat_id = args.replace("setup_", "")
-        app_url = f"{WEBAPP_URL}?chat_id={chat_id}"
+        # Добавляем метку времени, чтобы сбросить кэш Telegram Mini App
+        app_url = f"{WEBAPP_URL}?chat_id={chat_id}&v={int(time.time())}"
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Открыть мастер настройки", web_app=WebAppInfo(url=app_url))]
