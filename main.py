@@ -78,7 +78,7 @@ def read_root():
 
 @app.get("/api/chat/verify-admin/{chat_id}")
 async def verify_chat_admin(chat_id: int, user_id: int):
-    """Проверяет, есть ли у бота права администратора в указанном чате (для экрана ожидания)"""
+    """Проверяет права администратора у бота в реальном времени (для экрана верификации)"""
     try:
         bot_info = await bot.get_me()
         member = await bot.get_chat_member(chat_id, bot_info.id)
@@ -89,7 +89,6 @@ async def verify_chat_admin(chat_id: int, user_id: int):
             "status": "ready" if is_bot_admin else "waiting"
         }
     except Exception as e:
-        # Если чат тестовый или бот еще не добавлен, возвращаем false для ожидания
         return {"is_admin": False, "status": "waiting", "error": str(e)}
 
 @app.get("/api/chat/{chat_id}")
@@ -118,6 +117,8 @@ def get_chat_config(chat_id: int, user_id: int):
 
 @app.post("/api/chat/setup")
 async def save_chat_setup(data: ChatSetupModel):
+    logging.info(f"📥 ПОЛУЧЕНЫ ДАННЫЕ НАСТРОЙКИ ДЛЯ ЧАТА: {data.chat_id}, ЮЗЕР: {data.user_id}, ВАЛЮТА: {data.currency_name}, ИИ: {data.ai_enabled}")
+    
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     
@@ -147,13 +148,26 @@ async def save_chat_setup(data: ChatSetupModel):
             f"🎉 <b>Gruppas OS успешно настроена для чата «{chat_title}»!</b>\n\n"
             f"💰 Валюта: <b>{data.currency_name}</b>\n"
             f"⚖️ ИИ-модератор: {ai_status}\n\n"
-            f"<i>Система полностью активирована и готова к работе.</i>",
+            f"<i>Система полностью активирована и готова к защите.</i>",
             parse_mode="HTML"
         )
+        logging.info(f"✅ Успешно отправлено уведомление в чат {data.chat_id}")
     except Exception as e:
-        logging.error(f"Не удалось отправить уведомление в чат: {e}")
+        logging.error(f"❌ ОШИБКА ОТПРАВКИ СООБЩЕНИЯ В ЧАТ {data.chat_id}: {e}")
 
     return {"status": "ok"}
+
+@app.post("/api/rules/add")
+def add_chat_rule(data: RuleCreateModel):
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
+        (data.chat_id, data.code, data.description, data.mute_minutes)
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "rule_added"}
 
 # --- КОМАНДЫ TELEGRAM БОТА ---
 @dp.message(Command("setup"), F.chat.type.in_({"group", "supergroup"}))
@@ -171,12 +185,12 @@ async def cmd_group_setup(message: types.Message):
     setup_link = f"https://t.me/{bot_info.username}?start=setup_{message.chat.id}"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚙️ Настроить экосистему в Mini App", url=setup_link)]
+        [InlineKeyboardButton(text="⚙️ Верифицировать и настроить чат", url=setup_link)]
     ])
     await message.answer(
         f"🛠 <b>Инициализация Gruppas OS для «{message.chat.title}»</b>\n\n"
         f"Администратор: {message.from_user.mention_html()}\n"
-        f"Нажмите кнопку ниже для верификации и настройки:",
+        f"Нажмите кнопку ниже для проверки прав и запуска мастера:",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -186,13 +200,14 @@ async def cmd_start_deeplink(message: types.Message, command: CommandObject):
     args = command.args
     if args and args.startswith("setup_"):
         chat_id = args.replace("setup_", "")
+        # Антикэш метка времени для сброса кэша Telegram Mini App
         app_url = f"{WEBAPP_URL}?chat_id={chat_id}&v={int(time.time())}"
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Запустить мастер настройки", web_app=WebAppInfo(url=app_url))]
         ])
         await message.answer(
-            "Панель верификации и конфигурации готова. Нажмите кнопку ниже:",
+            "Панель верификации и конфигурации чата готова. Нажмите кнопку ниже:",
             reply_markup=kb
         )
     else:
