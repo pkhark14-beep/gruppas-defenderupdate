@@ -71,12 +71,6 @@ body {
 }
 
 .setup-header { margin-bottom: 18px; }
-.progress-container { display: none; gap: 6px; margin-bottom: 12px; }
-.progress-bar {
-  flex: 1; height: 4px; background: rgba(124, 58, 237, 0.2);
-  border-radius: 4px; overflow: hidden; transition: 0.4s;
-}
-.progress-bar.active { background: linear-gradient(90deg, #a855f7, #7c3aed); }
 
 .top-bar {
   display: flex; align-items: center; justify-content: space-between;
@@ -179,13 +173,6 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
 .nav-item i { font-size: 18px; }
 .nav-item.active { color: var(--accent); background: rgba(168, 85, 247, 0.12); }
 
-.spinner-ring {
-  width: 52px; height: 52px; border: 5px solid rgba(124, 58, 237, 0.15);
-  border-top: 5px solid var(--accent); border-radius: 50%;
-  animation: spin 1s linear infinite; margin: 0 auto 14px auto;
-}
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
 .page { display: none; }
 .page.active { display: block; }
 </style>
@@ -193,11 +180,6 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
 <body>
 
 <div class="setup-header">
-  <div class="progress-container" id="progressBarContainer">
-    <div class="progress-bar active" id="p1"></div>
-    <div class="progress-bar" id="p2"></div>
-  </div>
-
   <div class="top-bar">
     <div class="brand">
       <div class="logo">G</div>
@@ -210,37 +192,23 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
   </div>
 </div>
 
-<!-- МАСТЕР ПЕРВИЧНОЙ НАСТРОЙКИ -->
-<div id="page-verify" class="page">
-  <div class="card" style="text-align: center; padding: 30px 20px;">
-    <div class="spinner-ring"></div>
-    <span class="badge"><i class="fa-solid fa-shield-halved"></i> Верификация</span>
-    <h3>Ожидание прав администратора</h3>
-    <p class="sub">Выдайте боту права администратора в групповом чате. Как только права будут выданы, экран перейдет к настройке.</p>
-    <div style="font-size: 12px; color: var(--accent); font-weight: 700;" id="verifyStatusText">Проверяем статус в Telegram...</div>
-  </div>
-</div>
-
-<div id="page-step1" class="page">
+<!-- БЫСТРАЯ ИНИЦИАЛИЗАЦИЯ ЧАТА (ЕСЛИ ЕЩЕ НЕ НАСТРОЕН) -->
+<div id="page-setup" class="page">
   <div class="card">
-    <span class="badge"><i class="fa-solid fa-coins"></i> Шаг 1 из 2</span>
-    <h3>Экономика и Валюта</h3>
-    <p class="sub">Название внутренней валюты чата:</p>
-    <input type="text" class="input-field" id="setupCurrency" value="G-Coins">
-    <button class="btn" onclick="nextStep(2)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
-  </div>
-</div>
+    <span class="badge"><i class="fa-solid fa-wand-magic-sparkles"></i> Первая настройка</span>
+    <h3>Инициализация Gruppas OS</h3>
+    <p class="sub">Настройте параметры чата для запуска ИИ-модератора и экономики.</p>
+    
+    <label style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 5px;">Название валюты чата:</label>
+    <input type="text" class="input-field" id="quickCurrency" value="G-Coins">
 
-<div id="page-step2" class="page">
-  <div class="card">
-    <span class="badge"><i class="fa-solid fa-brain"></i> Шаг 2 из 2</span>
-    <h3>ИИ-Судья и Автомодерация</h3>
-    <p class="sub">Включить автомодерацию правил через ИИ?</p>
-    <select class="input-field" id="setupAi">
-      <option value="true">🤖 Включить ИИ-модератора (авто-муты 24/7)</option>
-      <option value="false">🛡 Только ручной контроль админов</option>
+    <label style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 5px;">ИИ-модератор Grok:</label>
+    <select class="input-field" id="quickAi">
+      <option value="true">🤖 Включить ИИ-модератора (авто-муты)</option>
+      <option value="false">🛡 Только ручной контроль</option>
     </select>
-    <button class="btn" onclick="finishSetup()">Сохранить и активировать <i class="fa-solid fa-rocket"></i></button>
+
+    <button class="btn" onclick="quickSetupChat()"><i class="fa-solid fa-rocket"></i> Запустить систему</button>
   </div>
 </div>
 
@@ -282,10 +250,6 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
       <div class="cmd-code">/profile</div>
       <div class="cmd-desc">Открыть приложение Gruppas OS.</div>
     </div>
-    <div class="cmd-item">
-      <div class="cmd-code">/balance</div>
-      <div class="cmd-desc">Проверить свой баланс валюты.</div>
-    </div>
   </div>
 
   <div class="card" id="adminCommandsBlock" style="display: none;">
@@ -293,10 +257,6 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
     <h3>Команды администраторов</h3>
     <p class="sub">Работают только у владельца и админов группы.</p>
     
-    <div class="cmd-item">
-      <div class="cmd-code">/setup</div>
-      <div class="cmd-desc">Привязать группу к Gruppas OS и запустить верификацию.</div>
-    </div>
     <div class="cmd-item">
       <div class="cmd-code">/start (в ЛС)</div>
       <div class="cmd-desc">Открыть центр управления всеми вашими чатами.</div>
@@ -413,7 +373,6 @@ function setTheme(theme) {
   }
 }
 
-let verifyInterval = null;
 let globalIsAdmin = false;
 
 async function initApp() {
@@ -430,10 +389,8 @@ async function initApp() {
 
     if (!isConfigured) {
       if (globalIsAdmin) {
-        document.getElementById('progressBarContainer').style.display = 'flex';
-        document.getElementById('page-verify').classList.add('active');
-        document.getElementById('headerSubtitle').innerText = "Верификация прав";
-        verifyInterval = setInterval(checkAdminRights, 2500);
+        document.getElementById('page-setup').classList.add('active');
+        document.getElementById('headerSubtitle').innerText = "Быстрая настройка";
       } else {
         document.getElementById('headerSubtitle').innerText = "Чат не настроен";
         document.body.innerHTML = `
@@ -465,7 +422,7 @@ async function initApp() {
         document.getElementById('adminCurrency').value = chat.currency_name || "G-Coins";
         document.getElementById('adminAi').value = chat.ai_enabled ? "true" : "false";
 
-        switchTab('admin', document.getElementById('navAdminTab'));
+        switchTab('profile', document.querySelector('.nav-item'));
       } else {
         document.getElementById('userRoleBadge').innerText = "Участник";
         switchTab('profile', document.querySelector('.nav-item'));
@@ -496,7 +453,7 @@ function renderRules(rules) {
       </div>
     `).join('');
   } else {
-    playerContainer.innerHTML = "В этом чате пока нет кастомных правил.";
+    playerContainer.innerHTML = "В этом чате пока нет правил.";
     adminContainer.innerHTML = "<div style='font-size: 12px; color: var(--text-desc); text-align: center;'>Список правил пуст.</div>";
   }
 }
@@ -517,44 +474,20 @@ function switchTab(tabName, navEl) {
   document.getElementById('headerSubtitle').innerText = titles[tabName] || 'Gruppas OS';
 }
 
-async function checkAdminRights() {
-  try {
-    const res = await fetch(`${API_URL}/api/chat/verify-admin/${chatId}?user_id=${userId}`);
-    const data = await res.json();
-
-    if (data.is_admin) {
-      clearInterval(verifyInterval); 
-      document.getElementById('page-verify').classList.remove('active');
-      document.getElementById('page-step1').classList.add('active');
-      document.getElementById('headerSubtitle').innerText = "Настройка валюты";
-      document.getElementById('p1').classList.add('active');
-    }
-  } catch (err) {}
-}
-
-function nextStep(step) {
-  if (step === 2) {
-    document.getElementById('page-step1').classList.remove('active');
-    document.getElementById('page-step2').classList.add('active');
-    document.getElementById('p2').classList.add('active');
-    document.getElementById('headerSubtitle').innerText = "Настройка ИИ";
-  }
-}
-
-async function finishSetup() {
-  const currency_name = document.getElementById('setupCurrency').value || "G-Coins";
-  const ai_enabled = document.getElementById('setupAi').value === 'true';
+async function quickSetupChat() {
+  const currency_name = document.getElementById('quickCurrency').value || "G-Coins";
+  const ai_enabled = document.getElementById('quickAi').value === 'true';
 
   try {
     const response = await fetch(`${API_URL}/api/chat/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
+      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled, rules_text: "Базовые правила чата настроены." })
     });
     if (!response.ok) throw new Error();
     location.reload();
   } catch (err) {
-    alert("Ошибка сохранения.");
+    alert("Ошибка инициализации.");
   }
 }
 
@@ -569,7 +502,7 @@ async function saveAdminSettings() {
       body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
     });
     if (!response.ok) throw new Error();
-    alert("✅ Настройки успешно обновлены!");
+    alert("✅ Параметры сохранены!");
     initApp();
   } catch (err) {
     alert("❌ Ошибка сохранения.");
