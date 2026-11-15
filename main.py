@@ -1,12 +1,11 @@
 import os
 import sqlite3
 import logging
-import asyncio
 import time
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -16,6 +15,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 AI_API_KEY = os.getenv("AI_API_KEY", "ТВОЙ_API_КЛЮЧ_ИИ")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://pkhark14-beep.github.io/gruppas-defenderupdate/")
+RENDER_URL = "https://gruppas-defenderupdate.onrender.com"  # Твой URL на Render
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -90,6 +90,18 @@ class RuleDeleteModel(BaseModel):
 def read_root():
     return {"status": "Gruppas OS Backend is online!", "database": "connected"}
 
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    """Эндпоинт, куда Telegram присылает все обновления"""
+    try:
+        json_data = await request.json()
+        update = types.Update(**json_data)
+        await dp.feed_update(bot, update)
+        return {"status": "ok"}
+    except Exception as e:
+        logging.error(f"Ошибка обработки вебхука: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/chat/verify-admin/{chat_id}")
 async def verify_chat_admin(chat_id: int, user_id: int):
     try:
@@ -130,7 +142,6 @@ async def get_chat_config(chat_id: int, user_id: int):
             if chat and chat['owner_id'] == user_id:
                 is_admin = True
 
-    # Регистрируем игрока, если его еще нет
     cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
     conn.commit()
     
@@ -326,14 +337,12 @@ async def cmd_start_deeplink(message: types.Message, command: CommandObject):
     else:
         await cmd_start_private(message)
 
-async def start_telegram_bot():
-    # Сбрасываем старый вебхук перед запуском polling, чтобы не было конфликтов
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(start_telegram_bot())
+    # Автоматически регистрируем webhook при старте FastAPI на Render
+    webhook_url = f"{RENDER_URL}/webhook"
+    await bot.set_webhook(webhook_url, drop_pending_updates=True)
+    logging.info( успешно установлен на: {webhook_url})
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
