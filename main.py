@@ -250,7 +250,6 @@ async def cmd_group_setup(message: types.Message):
 
 @dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_profile(message: types.Message):
-    # Регистрируем игрока в базе при вызове /profile
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     cur.execute("""
@@ -279,7 +278,6 @@ async def cmd_start_private(message: types.Message):
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
-    # Быстрый поиск всех чатов, где пользователь владелец ИЛИ есть в таблице игроков
     accessible_chats = cur.execute("""
         SELECT DISTINCT c.* FROM chats c
         LEFT JOIN players p ON c.chat_id = p.chat_id
@@ -329,6 +327,8 @@ async def cmd_start_deeplink(message: types.Message, command: CommandObject):
         await cmd_start_private(message)
 
 async def start_telegram_bot():
+    # Сбрасываем старый вебхук перед запуском polling, чтобы не было конфликтов
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 @app.on_event("startup")
