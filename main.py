@@ -38,7 +38,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- ЕДИНОЕ ПОДКЛЮЧЕНИЕ К БАЗЕ БЕЗ БЛОКИРОВОК ---
 def get_db():
     conn = sqlite3.connect("gruppas.db", timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -49,7 +48,6 @@ def get_db():
 class SetupWizard(StatesGroup):
     waiting_for_rules = State()
 
-# --- ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ ---
 def init_db():
     with get_db() as conn:
         cur = conn.cursor()
@@ -91,7 +89,6 @@ def init_db():
 
 init_db()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БАЗЫ ---
 def upsert_member_with_conn(conn: sqlite3.Connection, chat_id: int, user: types.User, role: str = None):
     if not user or user.is_bot:
         return
@@ -122,20 +119,21 @@ def upsert_member(chat_id: int, user: types.User, role: str = None):
         conn.commit()
 
 async def sync_chat_admins(chat_id: int):
-    """Сканирует и записывает всех админов и владельца группы одним соединением"""
-    admins = await bot.get_chat_administrators(chat_id)
-    with get_db() as conn:
-        cur = conn.cursor()
-        for adm in admins:
-            if adm.user.is_bot:
-                continue
-            role = "creator" if adm.status == "creator" else "administrator"
-            if role == "creator":
-                cur.execute("UPDATE chats SET owner_id = ? WHERE chat_id = ?", (adm.user.id, chat_id))
-            upsert_member_with_conn(conn, chat_id, adm.user, role=role)
-        conn.commit()
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        with get_db() as conn:
+            cur = conn.cursor()
+            for adm in admins:
+                if adm.user.is_bot:
+                    continue
+                role = "creator" if adm.status == "creator" else "administrator"
+                if role == "creator":
+                    cur.execute("UPDATE chats SET owner_id = ? WHERE chat_id = ?", (adm.user.id, chat_id))
+                upsert_member_with_conn(conn, chat_id, adm.user, role=role)
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Ошибка sync_chat_admins: {e}")
 
-# --- НЕЙРОСЕТЬ GROK ДЛЯ УМНОЙ МОДЕРАЦИИ ПО ПРАВИЛАМ ---
 async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool, message_text: str) -> dict:
     if not AI_API_KEY or AI_API_KEY == "ТВОЙ_API_КЛЮЧ_GROK":
         return {"violated": False}
@@ -176,14 +174,11 @@ async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool
                     raw_reply = data["choices"][0]["message"]["content"].strip()
                     raw_reply = raw_reply.replace("```json", "").replace("```", "").strip()
                     return json.loads(raw_reply)
-                else:
-                    logging.error(f"Grok API error {resp.status}: {await resp.text()}")
     except Exception as e:
         logging.error(f"Ошибка вызова Grok: {e}")
 
     return {"violated": False}
 
-# --- МОДЕЛИ API ---
 class ChatSetupModel(BaseModel):
     chat_id: int
     user_id: int
@@ -207,7 +202,6 @@ class PremToggleModel(BaseModel):
     target_user_id: int
     is_prem: bool
 
-# --- API ЭНДПОИНТЫ ДЛЯ MINI APP ---
 @app.get("/")
 @app.head("/")
 def read_root():
@@ -286,12 +280,10 @@ def set_member_prem(data: PremToggleModel):
         conn.commit()
     return {"status": "updated"}
 
-# --- СОБЫТИЯ ДОБАВЛЕНИЯ БОТА И УЧАСТНИКОВ В ЧАТЫ ---
 @dp.my_chat_member()
 async def on_bot_status_change(event: types.ChatMemberUpdated):
     if event.chat.type not in ("group", "supergroup"):
         return
-    
     new_status = event.new_chat_member.status
     is_admin = 1 if new_status in ("administrator", "creator") else 0
     
@@ -310,16 +302,6 @@ async def on_bot_status_change(event: types.ChatMemberUpdated):
 
     if is_admin:
         await sync_chat_admins(event.chat.id)
-        try:
-            bot_info = await bot.get_me()
-            await bot.send_message(
-                event.chat.id,
-                f"🛡 <b>Gruppas OS подключена к «{event.chat.title}»!</b>\n\n"
-                f"Права администратора получены. Владелец или админ может запустить настройку в ЛС с ботом (@{bot_info.username}) через /start.",
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
 
 @dp.chat_member()
 async def on_user_join_or_update(event: types.ChatMemberUpdated):
@@ -331,7 +313,6 @@ async def on_user_join_or_update(event: types.ChatMemberUpdated):
         role = status if status in ("administrator", "creator") else "member"
         upsert_member(event.chat.id, user, role=role)
 
-# --- КОМАНДЫ В ЛС: ПЕРВОНАЧАЛЬНАЯ НАСТРОЙКА И ХАБ ---
 @dp.message(Command("start"), F.chat.type == "private")
 async def cmd_start_private(message: types.Message, state: FSMContext):
     await state.clear()
@@ -347,9 +328,8 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
     if not chats:
         await message.answer(
             "👋 <b>Добро пожаловать в Gruppas OS!</b>\n\n"
-            "Пока не найдено ни одного чата с вашим участием.\n"
-            "1. Добавьте меня в вашу группу и выдайте <b>права администратора</b>.\n"
-            "2. Нажмите /start здесь снова — чат появится в списке для настройки!",
+            "Пока в базе нет чатов с вашим участием.\n"
+            "Просто напишите любое сообщение в вашей группе с ботом — и чат мгновенно появится здесь!",
             parse_mode="HTML"
         )
         return
@@ -385,7 +365,6 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
         reply_markup=kb
     )
 
-# --- ПОШАГОВЫЙ МАСТЕР НАСТРОЙКИ ЧАТА ---
 @dp.callback_query(F.data.startswith("setup_chat:"))
 async def wizard_step_1_check_admin(callback: types.CallbackQuery, state: FSMContext):
     chat_id = int(callback.data.split(":")[1])
@@ -398,22 +377,15 @@ async def wizard_step_1_check_admin(callback: types.CallbackQuery, state: FSMCon
         if bot_member.status not in ("administrator", "creator"):
             await callback.message.edit_text(
                 "⚠️ <b>У бота нет прав администратора в этом чате!</b>\n\n"
-                "Выдайте боту права администратора (удаление сообщений и блокировка участников), "
-                "а затем снова нажмите /start.",
+                "Выдайте боту права администратора и снова нажмите /start в ЛС.",
                 parse_mode="HTML"
             )
-            return
-            
-        user_member = await bot.get_chat_member(chat_id, user_id)
-        if user_member.status not in ("administrator", "creator"):
-            await callback.message.answer("⛔ Только администраторы чата могут выполнять настройку!")
             return
             
         await sync_chat_admins(chat_id)
         with get_db() as conn:
             conn.execute("UPDATE chats SET bot_is_admin = 1 WHERE chat_id = ?", (chat_id,))
             conn.commit()
-        
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка проверки прав чата: {e}")
         return
@@ -422,21 +394,19 @@ async def wizard_step_1_check_admin(callback: types.CallbackQuery, state: FSMCon
     await state.set_state(SetupWizard.waiting_for_rules)
     
     await callback.message.edit_text(
-        "✅ <b>Шаг 1/2: Права администратора подтверждены!</b>\n\n"
+        "✅ <b>Шаг 1/2: Права подтверждены!</b>\n\n"
         "📜 <b>Шаг 2/2: Отправьте текст правил вашего чата одним сообщением.</b>\n"
-        "Обязательно укажите пункты и время наказания (как в Ирисе), чтобы нейросеть <b>Grok</b> знала, на сколько мутить нарушителей.\n\n"
+        "Укажите пункты и время мута (как в Ирисе), чтобы Grok знал, как наказывать нарушителей:\n\n"
         "<i>Пример:\n"
-        "1.1 Оскорбления участников — мут 60 минут\n"
-        "1.2 Спам, флуд, реклама — мут 1440 минут\n"
-        "1.3 Политика и розжиг — мут 10080 минут\n"
-        "(Для владельцев Gruppas Prem наказания смягчаются в 2 раза)</i>",
+        "1.1 Оскорбления — мут 60 минут\n"
+        "1.2 Спам — мут 1440 минут</i>",
         parse_mode="HTML"
     )
 
 @dp.message(SetupWizard.waiting_for_rules, F.chat.type == "private")
 async def wizard_step_2_save_rules(message: types.Message, state: FSMContext):
     if not message.text:
-        await message.answer("⚠️ Пожалуйста, отправьте правила именно текстом.")
+        await message.answer("⚠️ Пожалуйста, отправьте правила текстом.")
         return
 
     rules_text = message.text.strip()
@@ -464,7 +434,6 @@ async def wizard_step_2_save_rules(message: types.Message, state: FSMContext):
         chat_title = chat_row["title"] if chat_row else f"Чат {chat_id}"
     
     await state.clear()
-    
     app_url = f"{WEBAPP_URL}?chat_id={chat_id}&v={int(time.time())}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🚀 Открыть Gruppas OS: {chat_title}", web_app=WebAppInfo(url=app_url))]
@@ -472,38 +441,31 @@ async def wizard_step_2_save_rules(message: types.Message, state: FSMContext):
     
     await message.answer(
         f"🎉 <b>Настройка чата «{chat_title}» завершена!</b>\n\n"
-        f"✅ Правила загружены в приложение и переданы нейросети <b>Grok</b>.\n"
-        f"🛡 ИИ-модератор активирован и следит за порядком.\n\n"
-        f"<i>Можете отключать модерацию в старом боте (Ирисе).</i>",
+        f"✅ Правила сохранены навсегда. ИИ-модератор Grok активирован.",
         parse_mode="HTML",
         reply_markup=kb
     )
 
-# --- КОМАНДЫ В ГРУППОВОМ ЧАТЕ ---
 @dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_profile(message: types.Message):
-    upsert_member(message.chat.id, message.from_user)
+    with get_db() as conn:
+        conn.execute("""
+            INSERT OR IGNORE INTO chats (chat_id, title, owner_id)
+            VALUES (?, ?, ?)
+        """, (message.chat.id, message.chat.title or f"Чат {message.chat.id}", message.from_user.id))
+        upsert_member_with_conn(conn, message.chat.id, message.from_user)
+        conn.commit()
+
     app_url = f"{WEBAPP_URL}?chat_id={message.chat.id}&v={int(time.time())}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📱 Открыть Gruppas OS", web_app=WebAppInfo(url=app_url))]
     ])
     await message.answer(
-        f"👤 <b>Профиль и правила чата</b>\n"
-        f"Участник: {message.from_user.mention_html()}",
+        f"👤 <b>Профиль и правила чата</b>\nУчастник: {message.from_user.mention_html()}",
         parse_mode="HTML",
         reply_markup=kb
     )
 
-@dp.message(Command("rules"), F.chat.type.in_({"group", "supergroup"}))
-async def cmd_group_rules(message: types.Message):
-    with get_db() as conn:
-        row = conn.execute("SELECT rules_text FROM chats WHERE chat_id = ?", (message.chat.id,)).fetchone()
-    if row and row["rules_text"]:
-        await message.answer(f"📜 <b>Правила чата:</b>\n\n{row['rules_text']}", parse_mode="HTML")
-    else:
-        await message.answer("📜 Правила для этого чата еще не настроены.")
-
-# --- УЧЕТ УЧАСТНИКОВ + ИИ-МОДЕРАЦИЯ GROK ---
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot:
@@ -512,7 +474,7 @@ async def handle_group_messages(message: types.Message):
     chat_id = message.chat.id
     user = message.from_user
     
-    # Регистрируем чат и участника, даже если бот был добавлен раньше
+    # Авто-регистрация чата и юзера при любом сообщении (чтобы база никогда не теряла чаты)
     with get_db() as conn:
         conn.execute("""
             INSERT OR IGNORE INTO chats (chat_id, title, owner_id)
@@ -561,7 +523,6 @@ async def handle_group_messages(message: types.Message):
                 permissions=ChatPermissions(can_send_messages=False),
                 until_date=until_date
             )
-            
             duration_str = f"{mute_mins} мин." if mute_mins > 0 else "навсегда"
             prem_badge = " 👑 [Gruppas Prem]" if is_prem else ""
             await bot.send_message(
@@ -574,9 +535,8 @@ async def handle_group_messages(message: types.Message):
                 parse_mode="HTML"
             )
         except Exception as e:
-            logging.error(f"Не удалось замутить пользователя {user.id}: {e}")
+            logging.error(f"Не удалось замутить: {e}")
 
-# --- ЗАПУСК ВЕБХУКА ПРИ СТАРТЕ ---
 @app.on_event("startup")
 async def startup_event():
     webhook_url = f"{RENDER_URL}/webhook"
