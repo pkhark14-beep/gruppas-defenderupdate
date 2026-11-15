@@ -106,7 +106,7 @@ def upsert_member(chat_id: int, user: types.User, role: str = None):
 
 async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool, message_text: str) -> dict:
     if not AI_API_KEY or AI_API_KEY == "ТВОЙ_API_КЛЮЧ_GROK":
-        logging.warning("AI_API_KEY не установлен! Проверка Grok пропущена.")
+        logging.warning("AI_API_KEY не установлен!")
         return {"violated": False}
 
     system_prompt = (
@@ -215,7 +215,7 @@ async def save_chat_setup(data: ChatSetupModel):
                 is_configured = 1
         """, (data.chat_id, data.user_id, data.currency_name, int(data.ai_enabled), data.rules_text))
         conn.commit()
-    logging.info(f"Чат {data.chat_id} настроен! Правила: {data.rules_text}")
+    logging.info(f"Чат {data.chat_id} настроен!")
     return {"status": "ok"}
 
 @dp.my_chat_member()
@@ -261,8 +261,8 @@ async def cmd_start_private(message: types.Message):
     if not chats:
         await message.answer(
             "👋 <b>Добро пожаловать в Gruppas OS!</b>\n\n"
-            "Пока в базе нет чатов с вашим участием.\n"
-            "Напишите любое сообщение в группе с ботом — и чат мгновенно появится здесь!",
+            "Пока в базе нет чатов с вашим участием (возможно, сервер перезапускался).\n"
+            "Напишите любое сообщение в вашей группе с ботом — и чат мгновенно появится здесь!",
             parse_mode="HTML"
         )
         return
@@ -312,8 +312,6 @@ async def handle_group_messages(message: types.Message):
     chat_id = message.chat.id
     user = message.from_user
     
-    logging.info(f"[ЧАТ {chat_id}] Сообщение от {user.full_name} ({user.id}): {message.text}")
-    
     with get_db() as conn:
         conn.execute("""
             INSERT INTO chats (chat_id, title, owner_id)
@@ -330,19 +328,13 @@ async def handle_group_messages(message: types.Message):
         chat = conn.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
         member = conn.execute("SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user.id)).fetchone()
     
-    if not chat or not chat["is_configured"]:
-        logging.info(f"[ЧАТ {chat_id}] Пропуск: чат еще не настроен (is_configured=0).")
+    if not chat or not chat["is_configured"] or not chat["ai_enabled"] or not chat["rules_text"]:
         return
 
-    if not chat["ai_enabled"] or not chat["rules_text"]:
-        logging.info(f"[ЧАТ {chat_id}] Пропуск: ИИ выключен или пустые правила.")
-        return
-
-    # Проверяем реальный статус пользователя в Telegram, чтобы не пытаться замутить админа/владельца
+    # Проверяем реальный статус пользователя в Telegram (создатель/админ чата пропускаются)
     try:
         tg_member = await bot.get_chat_member(chat_id, user.id)
         if tg_member.status in ("creator", "administrator"):
-            logging.info(f"[ЧАТ {chat_id}] Пропуск: пользователь {user.full_name} является админом/владельцем в Telegram.")
             return
     except Exception as e:
         logging.error(f"Ошибка проверки статуса в Telegram: {e}")
@@ -377,6 +369,8 @@ async def handle_group_messages(message: types.Message):
             
             duration_str = f"{mute_mins} мин." if mute_mins > 0 else "навсегда"
             prem_badge = " 👑 [Gruppas Prem]" if is_prem else ""
+            
+            # Отчет о наказании в чат
             await bot.send_message(
                 chat_id,
                 f"⚖️ <b>Grok AI Модератор</b>\n\n"
@@ -388,9 +382,11 @@ async def handle_group_messages(message: types.Message):
             )
         except Exception as e:
             logging.error(f"Не удалось замутить участника: {e}")
+            # Сообщение об ошибке, если у бота нет прав или прав на блокировку
             await bot.send_message(
                 chat_id,
-                f"⚠️ <b>У меня нет прав администратора</b> для ограничения участника {user.mention_html()}! Выдайте мне права на блокировку пользователей.",
+                f"⚠️ <b>Ошибка модерации:</b> не удалось применить наказание к {user.mention_html()}.\n"
+                f"Причина: <i>У меня отсутствуют права администратора или права на блокировку пользователей в этом чате!</i>",
                 parse_mode="HTML"
             )
 
