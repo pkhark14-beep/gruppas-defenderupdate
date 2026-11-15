@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Gruppas OS — Верификация и Настройка</title>
+<title>Gruppas OS — Панель управления</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -121,12 +121,18 @@ p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-heigh
 
 .page { display: none; }
 .page.active { display: block; }
+
+.stat-box {
+  background: rgba(255, 255, 255, 0.6);
+  padding: 14px; border-radius: 14px; margin-bottom: 12px;
+  border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;
+}
 </style>
 </head>
 <body>
 
 <div class="setup-header">
-  <div class="progress-container">
+  <div class="progress-container" id="progressBarContainer">
     <div class="progress-bar active" id="p1"></div>
     <div class="progress-bar" id="p2"></div>
     <div class="progress-bar" id="p3"></div>
@@ -137,36 +143,35 @@ p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-heigh
       <div class="logo">G</div>
       <div>
         <div>Gruppas OS</div>
-        <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="headerSubtitle">Верификация прав</div>
+        <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="headerSubtitle">Загрузка...</div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ШАГ 0: ОЖИДАНИЕ ПРАВ АДМИНИСТРАТОРА (GOOGLE 2FA СТИЛЬ) -->
-<div id="page-verify" class="page active">
+<!-- ШАГ 0: ВЕРИФИКАЦИЯ ПРАВ (ПЕРВИЧНАЯ НАСТРОЙКА) -->
+<div id="page-verify" class="page">
   <div class="card" style="text-align: center; padding: 30px 20px;">
     <div class="spinner-ring"></div>
-    <span class="badge"><i class="fa-solid fa-shield-halved"></i> Проверка доступа</span>
+    <span class="badge"><i class="fa-solid fa-shield-halved"></i> Верификация</span>
     <h3>Ожидание прав администратора</h3>
-    <p class="sub">Выдайте боту права администратора в вашем групповом чате. Как только права будут выданы, этот экран автоматически перейдет к настройке.</p>
+    <p class="sub">Выдайте боту права администратора в групповом чате. Как только права будут выданы, экран перейдет к настройке.</p>
     <div style="font-size: 12px; color: #7c3aed; font-weight: 700;" id="verifyStatusText">Проверяем статус в Telegram...</div>
   </div>
 </div>
 
-<!-- ШАГ 1: ВЫБОР ВАЛЮТЫ -->
+<!-- ШАГ 1: ВЫБОР ВАЛЮТЫ (МАСТЕР ПЕРВИЧНОЙ НАСТРОЙКИ) -->
 <div id="page-step1" class="page">
   <div class="card">
     <span class="badge"><i class="fa-solid fa-coins"></i> Шаг 1 из 2</span>
     <h3>Экономика и Валюта</h3>
-    <p class="sub">Как будет называться внутренняя валюта вашего чата?</p>
-    <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">Название валюты:</label>
+    <p class="sub">Название внутренней валюты чата:</p>
     <input type="text" class="input-field" id="setupCurrency" value="G-Coins">
     <button class="btn" onclick="nextStep(2)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
   </div>
 </div>
 
-<!-- ШАГ 2: ИИ-МОДЕРАТОР -->
+<!-- ШАГ 2: ИИ-МОДЕРАТОР (МАСТЕР ПЕРВИЧНОЙ НАСТРОЙКИ) -->
 <div id="page-step2" class="page">
   <div class="card">
     <span class="badge"><i class="fa-solid fa-brain"></i> Шаг 2 из 2</span>
@@ -180,12 +185,58 @@ p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-heigh
   </div>
 </div>
 
-<!-- ШАГ 3: УСПЕШНО -->
+<!-- АДМИН-ПАНЕЛЬ (ЕСЛИ ЧАТ УЖЕ НАСТРОЕН) -->
+<div id="page-admin-panel" class="page">
+  <div class="card">
+    <span class="badge"><i class="fa-solid fa-sliders"></i> Админ-панель чата</span>
+    <h3>Управление экосистемой</h3>
+    <p class="sub">Изменяйте параметры чата в реальном времени.</p>
+    
+    <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">Название валюты:</label>
+    <input type="text" class="input-field" id="adminCurrency" value="G-Coins">
+
+    <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">ИИ-модератор:</label>
+    <select class="input-field" id="adminAi">
+      <option value="true">🤖 Включен (авто-муты 24/7)</option>
+      <option value="false">🛡 Отключен (только ручной контроль)</option>
+    </select>
+
+    <button class="btn" onclick="saveAdminSettings()"><i class="fa-solid fa-floppy-disk"></i> Сохранить изменения</button>
+  </div>
+</div>
+
+<!-- ПАНЕЛЬ ИГРОКА (ДЛЯ ОБЫЧНЫХ УЧАСТНИКОВ) -->
+<div id="page-player-panel" class="page">
+  <div class="card">
+    <span class="badge"><i class="fa-solid fa-user"></i> Профиль участника</span>
+    <h3 id="playerWelcome">Личный кабинет</h3>
+    <p class="sub">Ваша статистика и информация о чате.</p>
+    
+    <div class="stat-box">
+      <span>💰 Ваш баланс:</span>
+      <strong id="playerBalance" style="color: #7c3aed; font-size: 16px;">100 G-Coins</strong>
+    </div>
+
+    <div class="stat-box">
+      <span>🛡 Статус защиты ИИ:</span>
+      <strong id="aiStatusText" style="color: #16a34a;">Активен</strong>
+    </div>
+
+    <h4 style="margin: 16px 0 8px 0; color: var(--title-color);"><i class="fa-solid fa-book"></i> Правила чата</h4>
+    <div id="playerRulesList" style="font-size: 13px; color: var(--text-desc); line-height: 1.6;">
+      Загрузка правил...
+    </div>
+
+    <button class="btn" style="margin-top: 16px;" onclick="closeWebApp()"><i class="fa-solid fa-check"></i> Закрыть</button>
+  </div>
+</div>
+
+<!-- ШАГ УСПЕХА -->
 <div id="page-success" class="page">
   <div class="card" style="text-align: center;">
     <div style="font-size: 50px; color: #16a34a; margin-bottom: 12px;"><i class="fa-solid fa-circle-check"></i></div>
     <h3>Всё готово!</h3>
-    <p class="sub">Чат успешно привязан к Gruppas OS. Уведомление отправлено в чат.</p>
+    <p class="sub">Чат успешно привязан к Gruppas OS.</p>
     <button class="btn" onclick="closeWebApp()"><i class="fa-solid fa-check"></i> Закрыть панель</button>
   </div>
 </div>
@@ -200,8 +251,66 @@ const urlParams = new URLSearchParams(window.location.search);
 const chatId = urlParams.get('chat_id') || "-100123456789";
 const userId = tg?.initDataUnsafe?.user?.id || 12345;
 
-// Запускаем фоновую проверку прав администратора (Google 2FA style)
-const verifyInterval = setInterval(checkAdminRights, 2500);
+let verifyInterval = null;
+
+async function initApp() {
+  try {
+    const res = await fetch(`${API_URL}/api/chat/${chatId}?user_id=${userId}`);
+    const data = await res.json();
+    
+    const chat = data.chat;
+    const isConfigured = chat && chat.is_configured === 1;
+    const isAdmin = data.is_admin;
+
+    if (!isConfigured) {
+      if (isAdmin) {
+        document.getElementById('progressBarContainer').style.display = 'flex';
+        document.getElementById('page-verify').classList.add('active');
+        document.getElementById('headerSubtitle').innerText = "Верификация прав";
+        verifyInterval = setInterval(checkAdminRights, 2500);
+      } else {
+        document.getElementById('progressBarContainer').style.display = 'none';
+        document.getElementById('headerSubtitle').innerText = "Ожидание настройки";
+        document.body.innerHTML = `
+          <div class="card" style="text-align: center; margin-top: 40px;">
+            <div style="font-size: 40px; color: #eab308; margin-bottom: 10px;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            <h3>Чат еще не настроен</h3>
+            <p class="sub">Администратор еще не инициализировал Gruppas OS в этом чате.</p>
+            <button class="btn" onclick="closeWebApp()">Закрыть</button>
+          </div>
+        `;
+      }
+    } else {
+      document.getElementById('progressBarContainer').style.display = 'none';
+      
+      if (isAdmin) {
+        // Открываем полноценную Админ-панель (одну страницу с настройками)
+        document.getElementById('page-admin-panel').classList.add('active');
+        document.getElementById('headerSubtitle').innerText = "Админ-панель";
+        document.getElementById('adminCurrency').value = chat.currency_name || "G-Coins";
+        document.getElementById('adminAi').value = chat.ai_enabled ? "true" : "false";
+      } else {
+        // Панель игрока
+        document.getElementById('page-player-panel').classList.add('active');
+        document.getElementById('headerSubtitle').innerText = "Личный кабинет";
+        document.getElementById('playerWelcome').innerText = `Привет, ${tg?.initDataUnsafe?.user?.first_name || 'Участник'}!`;
+        document.getElementById('playerBalance').innerText = `${data.player?.balance || 100} ${chat.currency_name || 'G-Coins'}`;
+        document.getElementById('aiStatusText').innerText = chat.ai_enabled ? "Активен (24/7)" : "Отключен";
+        
+        const rulesList = data.rules;
+        const rulesContainer = document.getElementById('playerRulesList');
+        if (rulesList && rulesList.length > 0) {
+          rulesContainer.innerHTML = rulesList.map(r => `• <b>${r.code}</b>: ${r.description} (Мут: ${r.mute_minutes} мин.)`).join('<br>');
+        } else {
+          rulesContainer.innerHTML = "В этом чате пока не добавлены кастомные правила ИИ.";
+        }
+      }
+    }
+  } catch (err) {
+    console.error(err);
+    document.getElementById('headerSubtitle').innerText = "Ошибка связи";
+  }
+}
 
 async function checkAdminRights() {
   try {
@@ -209,17 +318,16 @@ async function checkAdminRights() {
     const data = await res.json();
 
     if (data.is_admin) {
-      clearInterval(verifyInterval); // Останавливаем проверку
-      // Плавный переход на Шаг 1
+      clearInterval(verifyInterval); 
       document.getElementById('page-verify').classList.remove('active');
       document.getElementById('page-step1').classList.add('active');
       document.getElementById('headerSubtitle').innerText = "Настройка валюты";
       setProgress(1);
     } else {
-      document.getElementById('verifyStatusText').innerText = "Ожидание выдачи прав в группе...";
+      document.getElementById('verifyStatusText').innerText = "Ожидание выдачи прав боту в группе...";
     }
   } catch (err) {
-    console.log("Ожидание соединения с сервером...");
+    console.log("Ожидание сервера...");
   }
 }
 
@@ -244,12 +352,11 @@ async function finishSetup() {
   const ai_enabled = document.getElementById('setupAi').value === 'true';
 
   document.getElementById('page-step2').classList.remove('active');
-  // Создаем временный экран загрузки сохранения
   document.body.insertAdjacentHTML('beforeend', `
     <div id="loading-overlay" class="card" style="text-align: center; padding: 30px;">
       <div class="spinner-ring" style="margin: 0 auto 15px auto;"></div>
       <h3>Сохранение параметров...</h3>
-      <p class="sub">Записываем конфигурацию в базу данных и активируем бота.</p>
+      <p class="sub">Записываем конфигурацию в базу данных.</p>
     </div>
   `);
 
@@ -267,8 +374,28 @@ async function finishSetup() {
     document.getElementById('headerSubtitle').innerText = "Готово к работе";
 
   } catch (err) {
-    alert("Не удалось сохранить параметры. Проверьте соединение.");
+    alert("Не удалось сохранить параметры.");
     location.reload();
+  }
+}
+
+async function saveAdminSettings() {
+  const currency_name = document.getElementById('adminCurrency').value || "G-Coins";
+  const ai_enabled = document.getElementById('adminAi').value === 'true';
+
+  try {
+    const response = await fetch(`${API_URL}/api/chat/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
+    });
+
+    if (!response.ok) throw new Error("Ошибка сервера");
+    
+    alert("✅ Настройки успешно сохранены!");
+    closeWebApp();
+  } catch (err) {
+    alert("❌ Не удалось сохранить настройки.");
   }
 }
 
@@ -279,6 +406,8 @@ function closeWebApp() {
     window.close();
   }
 }
+
+initApp();
 </script>
 </body>
 </html>
