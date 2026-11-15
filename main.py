@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 AI_API_KEY = os.getenv("AI_API_KEY", "ТВОЙ_API_КЛЮЧ_GROK")
@@ -106,26 +106,27 @@ def upsert_member(chat_id: int, user: types.User, role: str = None):
 
 async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool, message_text: str) -> dict:
     if not AI_API_KEY or AI_API_KEY == "ТВОЙ_API_КЛЮЧ_GROK":
+        logging.warning("AI_API_KEY не установлен! Проверка Grok пропущена.")
         return {"violated": False}
 
     system_prompt = (
-        "Ты — умный ИИ-модератор Grok в системе Gruppas OS. "
-        "Твоя задача — мгновенно анализировать сообщение участника по правилам этого чата.\n\n"
+        "Ты — строгий и мгновенный ИИ-модератор Grok в системе Gruppas OS. "
+        "Твоя задача — проверять сообщения участников по правилам этого чата.\n\n"
         f"ПРАВИЛА ЧАТА И НАКАЗАНИЯ:\n{rules_text}\n\n"
         "ИНСТРУКЦИЯ ДЛЯ АНАЛИЗА:\n"
         "1. Сопоставь текст участника с правилами выше.\n"
-        "2. Если есть явное нарушение (мат, оскорбления, спам, запрещенные темы и т.д.):\n"
-        "   - Найди в тексте правил точное время наказания, которое установил администратор (например, если написано 'мут 1 час' -> вычлени 60 минут; 'мут 2 часа' -> 120; 'навсегда' -> 0).\n"
-        "   - Если время в правилах не указано вообще, по умолчанию ставь 60 минут.\n"
-        f"3. Статус пользователя: {'Gruppas Prem (учитывай смягчение, если оно прописано в правилах)' if is_prem else 'Обычный участник'}.\n"
-        "4. Верни СТРОГО JSON без markdown-обертки и лишних слов:\n"
-        '{"violated": true, "rule_code": "пункт или суть правила", "reason": "краткая причина", "mute_minutes": число_минут}\n'
+        "2. Если есть нарушение (мат, оскорбления, спам, запрещенные действия из правил):\n"
+        "   - Извлеки из текста правил точное время наказания в минутах (например: '1 час' -> 60, '2 часа' -> 120, 'сутки' -> 1440, 'навсегда' -> 0).\n"
+        "   - Если время в правилах не указано, ставь 60.\n"
+        f"3. Статус пользователя: {'Gruppas Prem (учитывай привилегии, если прописаны в правилах)' if is_prem else 'Обычный участник'}.\n"
+        "4. Верни СТРОГО валидный JSON без markdown-разметки:\n"
+        '{"violated": true, "rule_code": "пункт правила", "reason": "краткая причина", "mute_minutes": число_минут}\n'
         "5. Если нарушений нет, верни СТРОГО:\n"
         '{"violated": false}'
     )
 
     payload = {
-        "model": "grok-2-latest",
+        "model": "grok-3-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Участник {user_name} написал: {message_text}"}
@@ -140,14 +141,18 @@ async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.x.ai/v1/chat/completions", json=payload, headers=headers, timeout=8) as resp:
+            async with session.post("https://api.x.ai/v1/chat/completions", json=payload, headers=headers, timeout=10) as resp:
+                resp_text = await resp.text()
                 if resp.status == 200:
-                    data = await resp.json()
+                    data = json.loads(resp_text)
                     raw_reply = data["choices"][0]["message"]["content"].strip()
                     raw_reply = raw_reply.replace("```json", "").replace("```", "").strip()
+                    logging.info(f"Ответ Grok: {raw_reply}")
                     return json.loads(raw_reply)
+                else:
+                    logging.error(f"Ошибка API Grok ({resp.status}): {resp_text}")
     except Exception as e:
-        logging.error(f"Ошибка вызова Grok: {e}")
+        logging.error(f"Исключение при вызове Grok: {e}")
 
     return {"violated": False}
 
@@ -201,11 +206,16 @@ async def get_chat_config(chat_id: int, user_id: int):
 async def save_chat_setup(data: ChatSetupModel):
     with get_db() as conn:
         conn.execute("""
-            UPDATE chats 
-            SET currency_name = ?, ai_enabled = ?, rules_text = ?, is_configured = 1
-            WHERE chat_id = ?
-        """, (data.currency_name, int(data.ai_enabled), data.rules_text, data.chat_id))
+            INSERT INTO chats (chat_id, owner_id, currency_name, ai_enabled, rules_text, is_configured)
+            VALUES (?, ?, ?, ?, ?, 1)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                currency_name = excluded.currency_name,
+                ai_enabled = excluded.ai_enabled,
+                rules_text = excluded.rules_text,
+                is_configured = 1
+        """, (data.chat_id, data.user_id, data.currency_name, int(data.ai_enabled), data.rules_text))
         conn.commit()
+    logging.info(f"Чат {data.chat_id} настроен! Правила: {data.rules_text}")
     return {"status": "ok"}
 
 @dp.my_chat_member()
@@ -277,8 +287,9 @@ async def cmd_start_private(message: types.Message):
 async def cmd_group_profile(message: types.Message):
     with get_db() as conn:
         conn.execute("""
-            INSERT OR IGNORE INTO chats (chat_id, title, owner_id)
+            INSERT INTO chats (chat_id, title, owner_id)
             VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title
         """, (message.chat.id, message.chat.title or f"Чат {message.chat.id}", message.from_user.id))
         upsert_member_with_conn(conn, message.chat.id, message.from_user)
         conn.commit()
@@ -301,10 +312,13 @@ async def handle_group_messages(message: types.Message):
     chat_id = message.chat.id
     user = message.from_user
     
+    logging.info(f"[ЧАТ {chat_id}] Сообщение от {user.full_name} ({user.id}): {message.text}")
+    
     with get_db() as conn:
         conn.execute("""
-            INSERT OR IGNORE INTO chats (chat_id, title, owner_id)
+            INSERT INTO chats (chat_id, title, owner_id)
             VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title
         """, (chat_id, message.chat.title or f"Чат {chat_id}", user.id))
         upsert_member_with_conn(conn, chat_id, user)
         conn.commit()
@@ -316,11 +330,22 @@ async def handle_group_messages(message: types.Message):
         chat = conn.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
         member = conn.execute("SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user.id)).fetchone()
     
-    if not chat or not chat["is_configured"] or not chat["ai_enabled"] or not chat["rules_text"]:
+    if not chat or not chat["is_configured"]:
+        logging.info(f"[ЧАТ {chat_id}] Пропуск: чат еще не настроен (is_configured=0).")
         return
-        
-    if member and member["role"] in ("creator", "administrator"):
+
+    if not chat["ai_enabled"] or not chat["rules_text"]:
+        logging.info(f"[ЧАТ {chat_id}] Пропуск: ИИ выключен или пустые правила.")
         return
+
+    # Проверяем реальный статус пользователя в Telegram, чтобы не пытаться замутить админа/владельца
+    try:
+        tg_member = await bot.get_chat_member(chat_id, user.id)
+        if tg_member.status in ("creator", "administrator"):
+            logging.info(f"[ЧАТ {chat_id}] Пропуск: пользователь {user.full_name} является админом/владельцем в Telegram.")
+            return
+    except Exception as e:
+        logging.error(f"Ошибка проверки статуса в Telegram: {e}")
 
     is_prem = bool(member["is_prem"]) if member else False
     
@@ -338,8 +363,8 @@ async def handle_group_messages(message: types.Message):
         
         try:
             await message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение: {e}")
             
         try:
             until_date = datetime.now(timezone.utc) + timedelta(minutes=mute_mins) if mute_mins > 0 else None
@@ -365,7 +390,7 @@ async def handle_group_messages(message: types.Message):
             logging.error(f"Не удалось замутить участника: {e}")
             await bot.send_message(
                 chat_id,
-                f"⚠️ <b>У меня нет прав администратора</b> для ограничения участника {user.mention_html()}! Выдайте мне права администратора в чате.",
+                f"⚠️ <b>У меня нет прав администратора</b> для ограничения участника {user.mention_html()}! Выдайте мне права на блокировку пользователей.",
                 parse_mode="HTML"
             )
 
