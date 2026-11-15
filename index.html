@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Gruppas OS — Мастер настройки</title>
+<title>Gruppas OS — Верификация и Настройка</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -112,11 +112,10 @@ p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-heigh
   justify-content: center; gap: 8px; box-shadow: 0 8px 20px rgba(109, 40, 217, 0.3);
 }
 
-#page-loading { text-align: center; padding: 40px 20px; }
 .spinner-ring {
-  width: 64px; height: 64px; border: 5px solid rgba(124, 58, 237, 0.15);
+  width: 56px; height: 56px; border: 5px solid rgba(124, 58, 237, 0.15);
   border-top: 5px solid #7c3aed; border-radius: 50%;
-  animation: spin 1s linear infinite; margin: 0 auto 20px auto;
+  animation: spin 1s linear infinite; margin: 0 auto 16px auto;
 }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
@@ -138,48 +137,56 @@ p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-heigh
       <div class="logo">G</div>
       <div>
         <div>Gruppas OS</div>
-        <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="headerSubtitle">Настройка экосистемы</div>
+        <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="headerSubtitle">Верификация прав</div>
       </div>
     </div>
   </div>
 </div>
 
-<div id="page-step1" class="page active">
+<!-- ШАГ 0: ОЖИДАНИЕ ПРАВ АДМИНИСТРАТОРА (GOOGLE 2FA СТИЛЬ) -->
+<div id="page-verify" class="page active">
+  <div class="card" style="text-align: center; padding: 30px 20px;">
+    <div class="spinner-ring"></div>
+    <span class="badge"><i class="fa-solid fa-shield-halved"></i> Проверка доступа</span>
+    <h3>Ожидание прав администратора</h3>
+    <p class="sub">Выдайте боту права администратора в вашем групповом чате. Как только права будут выданы, этот экран автоматически перейдет к настройке.</p>
+    <div style="font-size: 12px; color: #7c3aed; font-weight: 700;" id="verifyStatusText">Проверяем статус в Telegram...</div>
+  </div>
+</div>
+
+<!-- ШАГ 1: ВЫБОР ВАЛЮТЫ -->
+<div id="page-step1" class="page">
   <div class="card">
-    <span class="badge"><i class="fa-solid fa-coins"></i> Шаг 1 из 3</span>
+    <span class="badge"><i class="fa-solid fa-coins"></i> Шаг 1 из 2</span>
     <h3>Экономика и Валюта</h3>
-    <p class="sub">Как будет называться внутренняя валюта чата?</p>
+    <p class="sub">Как будет называться внутренняя валюта вашего чата?</p>
     <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">Название валюты:</label>
     <input type="text" class="input-field" id="setupCurrency" value="G-Coins">
     <button class="btn" onclick="nextStep(2)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
   </div>
 </div>
 
+<!-- ШАГ 2: ИИ-МОДЕРАТОР -->
 <div id="page-step2" class="page">
   <div class="card">
-    <span class="badge"><i class="fa-solid fa-brain"></i> Шаг 2 из 3</span>
+    <span class="badge"><i class="fa-solid fa-brain"></i> Шаг 2 из 2</span>
     <h3>ИИ-Судья и Автомодерация</h3>
     <p class="sub">Включить автомодерацию правил через ИИ?</p>
     <select class="input-field" id="setupAi">
       <option value="true">🤖 Включить ИИ-модератора (авто-муты 24/7)</option>
       <option value="false">🛡 Только ручной контроль админов</option>
     </select>
-    <button class="btn" onclick="nextStep(3)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
+    <button class="btn" onclick="finishSetup()">Сохранить и активировать <i class="fa-solid fa-rocket"></i></button>
   </div>
 </div>
 
-<div id="page-step3" class="page">
-  <div class="card" id="page-loading">
-    <div class="spinner-ring"></div>
-    <h3 style="margin-bottom: 6px;">Настройка экосистемы...</h3>
-    <p class="sub" style="margin-bottom: 0;">Связываемся с сервером на Render, создаем базу данных и активируем ИИ. Пожалуйста, подождите.</p>
-  </div>
-
-  <div class="card" id="page-success" style="display: none; text-align: center;">
+<!-- ШАГ 3: УСПЕШНО -->
+<div id="page-success" class="page">
+  <div class="card" style="text-align: center;">
     <div style="font-size: 50px; color: #16a34a; margin-bottom: 12px;"><i class="fa-solid fa-circle-check"></i></div>
     <h3>Всё готово!</h3>
-    <p class="sub">Чат успешно привязан к Gruppas OS.</p>
-    <button class="btn" onclick="location.reload()"><i class="fa-solid fa-rocket"></i> Открыть панель</button>
+    <p class="sub">Чат успешно привязан к Gruppas OS. Уведомление отправлено в чат.</p>
+    <button class="btn" onclick="closeWebApp()"><i class="fa-solid fa-check"></i> Закрыть панель</button>
   </div>
 </div>
 
@@ -192,6 +199,29 @@ tg?.expand();
 const urlParams = new URLSearchParams(window.location.search);
 const chatId = urlParams.get('chat_id') || "-100123456789";
 const userId = tg?.initDataUnsafe?.user?.id || 12345;
+
+// Запускаем фоновую проверку прав администратора (Google 2FA style)
+const verifyInterval = setInterval(checkAdminRights, 2500);
+
+async function checkAdminRights() {
+  try {
+    const res = await fetch(`${API_URL}/api/chat/verify-admin/${chatId}?user_id=${userId}`);
+    const data = await res.json();
+
+    if (data.is_admin) {
+      clearInterval(verifyInterval); // Останавливаем проверку
+      // Плавный переход на Шаг 1
+      document.getElementById('page-verify').classList.remove('active');
+      document.getElementById('page-step1').classList.add('active');
+      document.getElementById('headerSubtitle').innerText = "Настройка валюты";
+      setProgress(1);
+    } else {
+      document.getElementById('verifyStatusText').innerText = "Ожидание выдачи прав в группе...";
+    }
+  } catch (err) {
+    console.log("Ожидание соединения с сервером...");
+  }
+}
 
 function setProgress(step) {
   document.querySelectorAll('.progress-bar').forEach((bar, idx) => {
@@ -206,18 +236,22 @@ function nextStep(step) {
     document.getElementById('page-step2').classList.add('active');
     setProgress(2);
     document.getElementById('headerSubtitle').innerText = "Настройка ИИ";
-  } else if (step === 3) {
-    document.getElementById('page-step2').classList.remove('active');
-    document.getElementById('page-step3').classList.add('active');
-    setProgress(3);
-    document.getElementById('headerSubtitle').innerText = "Применение параметров";
-    submitSetup();
   }
 }
 
-async function submitSetup() {
+async function finishSetup() {
   const currency_name = document.getElementById('setupCurrency').value || "G-Coins";
   const ai_enabled = document.getElementById('setupAi').value === 'true';
+
+  document.getElementById('page-step2').classList.remove('active');
+  // Создаем временный экран загрузки сохранения
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="loading-overlay" class="card" style="text-align: center; padding: 30px;">
+      <div class="spinner-ring" style="margin: 0 auto 15px auto;"></div>
+      <h3>Сохранение параметров...</h3>
+      <p class="sub">Записываем конфигурацию в базу данных и активируем бота.</p>
+    </div>
+  `);
 
   try {
     const response = await fetch(`${API_URL}/api/chat/setup`, {
@@ -228,21 +262,21 @@ async function submitSetup() {
 
     if (!response.ok) throw new Error("Ошибка сервера");
 
-    setTimeout(() => {
-      document.getElementById('page-loading').style.display = 'none';
-      document.getElementById('page-success').style.display = 'block';
-      document.getElementById('headerSubtitle').innerText = "Готово к работе";
-    }, 1200);
+    document.getElementById('loading-overlay').remove();
+    document.getElementById('page-success').classList.add('active');
+    document.getElementById('headerSubtitle').innerText = "Готово к работе";
 
   } catch (err) {
-    setTimeout(() => {
-      document.getElementById('page-loading').innerHTML = `
-        <div style="font-size: 40px; color: #ef4444; margin-bottom: 10px;"><i class="fa-solid fa-triangle-exclamation"></i></div>
-        <h3>Сервер просыпается</h3>
-        <p class="sub">Бесплатный сервер на Render запускается. Нажмите кнопку ниже.</p>
-        <button class="btn" onclick="location.reload()">Повторить попытку</button>
-      `;
-    }, 1000);
+    alert("Не удалось сохранить параметры. Проверьте соединение.");
+    location.reload();
+  }
+}
+
+function closeWebApp() {
+  if (window.Telegram?.WebApp) {
+    window.Telegram.WebApp.close();
+  } else {
+    window.close();
   }
 }
 </script>
