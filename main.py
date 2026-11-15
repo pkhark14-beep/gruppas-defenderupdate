@@ -130,12 +130,11 @@ async def get_chat_config(chat_id: int, user_id: int):
             if chat and chat['owner_id'] == user_id:
                 is_admin = True
 
+    # Регистрируем игрока, если его еще нет
+    cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
+    conn.commit()
+    
     player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
-    if not player:
-        cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
-        conn.commit()
-        player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
-
     rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
     conn.close()
     
@@ -208,6 +207,21 @@ def delete_chat_rule(data: RuleDeleteModel):
     conn.close()
     return {"status": "rule_deleted"}
 
+# --- АВТОМАТИЧЕСКИЙ УЧЕТ УЧАСТНИКОВ В ГРУППАХ ---
+@dp.message(F.chat.type.in_({"group", "supergroup"}))
+async def track_group_members(message: types.Message):
+    if message.from_user and not message.from_user.is_bot:
+        conn = sqlite3.connect("gruppas.db")
+        cur = conn.cursor()
+        chat = cur.execute("SELECT is_configured FROM chats WHERE chat_id = ?", (message.chat.id,)).fetchone()
+        if chat and chat[0] == 1:
+            cur.execute("""
+                INSERT OR IGNORE INTO players (chat_id, user_id, username, balance) 
+                VALUES (?, ?, ?, 100)
+            """, (message.chat.id, message.from_user.id, message.from_user.username))
+            conn.commit()
+        conn.close()
+
 # --- КОМАНДЫ TELEGRAM БОТА ---
 @dp.message(Command("setup"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_setup(message: types.Message):
@@ -236,6 +250,16 @@ async def cmd_group_setup(message: types.Message):
 
 @dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_profile(message: types.Message):
+    # Регистрируем игрока в базе при вызове /profile
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR IGNORE INTO players (chat_id, user_id, username, balance) 
+        VALUES (?, ?, ?, 100)
+    """, (message.chat.id, message.from_user.id, message.from_user.username))
+    conn.commit()
+    conn.close()
+
     app_url = f"{WEBAPP_URL}?chat_id={message.chat.id}&v={int(time.time())}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Открыть приложение Gruppas OS", web_app=WebAppInfo(url=app_url))]
@@ -255,26 +279,13 @@ async def cmd_start_private(message: types.Message):
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
-    configured_chats = cur.execute("SELECT * FROM chats WHERE is_configured = 1").fetchall()
+    # Быстрый поиск всех чатов, где пользователь владелец ИЛИ есть в таблице игроков
+    accessible_chats = cur.execute("""
+        SELECT DISTINCT c.* FROM chats c
+        LEFT JOIN players p ON c.chat_id = p.chat_id
+        WHERE c.is_configured = 1 AND (c.owner_id = ? OR p.user_id = ?)
+    """, (user_id, user_id)).fetchall()
     
-    accessible_chats = []
-    for chat in configured_chats:
-        chat_id = chat['chat_id']
-        is_owner = (chat['owner_id'] == user_id)
-        in_players = cur.execute("SELECT 1 FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
-        
-        if is_owner or in_players:
-            accessible_chats.append(chat)
-        else:
-            try:
-                member = await bot.get_chat_member(chat_id, user_id)
-                if member.status not in ["left", "kicked"]:
-                    cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
-                    conn.commit()
-                    accessible_chats.append(chat)
-            except Exception:
-                pass
-                
     conn.close()
     
     if accessible_chats:
@@ -296,7 +307,7 @@ async def cmd_start_private(message: types.Message):
     else:
         await message.answer(
             "👋 Добро пожаловать в <b>Gruppas OS</b>!\n\n"
-            "Вы пока не состоите ни в одном настроенном чате. Добавьте меня в групповой чат, выдайте права администратора и отправьте команду <b>/setup</b>.",
+            "Вы пока не состоите ни в одном настроенном чате. Напишите любое сообщение в группе с ботом или используйте команду <b>/profile</b> в чате.",
             parse_mode="HTML"
         )
 
