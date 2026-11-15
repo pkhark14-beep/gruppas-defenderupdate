@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 AI_API_KEY = os.getenv("AI_API_KEY", "ТВОЙ_API_КЛЮЧ_ИИ")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://pkhark14-beep.github.io/gruppas-defenderupdate/")
-RENDER_URL = "https://gruppas-defenderupdate.onrender.com"  # Твой URL на Render
+RENDER_URL = "https://gruppas-defenderupdate.onrender.com"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -92,7 +92,6 @@ def read_root():
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    """Эндпоинт, куда Telegram присылает все обновления"""
     try:
         json_data = await request.json()
         update = types.Update(**json_data)
@@ -339,10 +338,9 @@ async def cmd_start_deeplink(message: types.Message, command: CommandObject):
 
 @app.on_event("startup")
 async def startup_event():
-    # Автоматически регистрируем webhook при старте FastAPI на Render
     webhook_url = f"{RENDER_URL}/webhook"
     await bot.set_webhook(webhook_url, drop_pending_updates=True)
-    logging.info( успешно установлен на: {webhook_url})
+    logging.info(f"Вебхук успешно установлен на: {webhook_url}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
