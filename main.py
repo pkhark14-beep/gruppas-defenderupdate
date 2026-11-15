@@ -6,7 +6,7 @@ import time
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -80,6 +80,10 @@ class RuleCreateModel(BaseModel):
     description: str
     mute_minutes: int = 60
 
+class RuleDeleteModel(BaseModel):
+    rule_id: int
+    chat_id: int
+
 # --- API ЭНДПОИНТЫ ---
 @app.get("/")
 @app.head("/")
@@ -114,7 +118,6 @@ async def get_chat_config(chat_id: int, user_id: int):
         conn.commit()
         chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
     
-    # Проверяем, является ли пользователь админом или владельцем чата
     is_admin = False
     if chat and chat['owner_id'] == user_id:
         is_admin = True
@@ -127,7 +130,6 @@ async def get_chat_config(chat_id: int, user_id: int):
             if chat and chat['owner_id'] == user_id:
                 is_admin = True
 
-    # Получаем или создаем баланс игрока
     player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
     if not player:
         cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
@@ -149,7 +151,9 @@ async def save_chat_setup(data: ChatSetupModel):
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     
-    chat = cur.execute("SELECT owner_id, title FROM chats WHERE chat_id = ?", (data.chat_id,)).fetchone()
+    chat = cur.execute("SELECT owner_id, title, is_configured FROM chats WHERE chat_id = ?", (data.chat_id,)).fetchone()
+    was_configured = chat[2] if chat else 0
+    
     if not chat:
         cur.execute("""
             INSERT INTO chats (chat_id, title, owner_id, currency_name, ai_enabled, is_configured)
@@ -160,25 +164,26 @@ async def save_chat_setup(data: ChatSetupModel):
         chat_title = chat[1] or f"Чат #{data.chat_id}"
         cur.execute("""
             UPDATE chats 
-            SET currency_name = ?, ai_enabled = ?, is_configured = 1, owner_id = ?
+            SET currency_name = ?, ai_enabled = ?, is_configured = 1
             WHERE chat_id = ?
-        """, (data.currency_name, int(data.ai_enabled), data.user_id, data.chat_id))
+        """, (data.currency_name, int(data.ai_enabled), data.chat_id))
         
     conn.commit()
     conn.close()
 
-    try:
-        ai_status = "🤖 Включен" if data.ai_enabled else "🛡 Выключен"
-        await bot.send_message(
-            data.chat_id,
-            f"🎉 <b>Gruppas OS успешно настроена для чата «{chat_title}»!</b>\n\n"
-            f"💰 Валюта: <b>{data.currency_name}</b>\n"
-            f"⚖️ ИИ-модератор: {ai_status}\n\n"
-            f"<i>Администраторы могут управлять через /start в ЛС, а игроки могут проверить профиль командой /profile.</i>",
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        logging.error(f"Ошибка отправки в чат: {e}")
+    if not was_configured:
+        try:
+            ai_status = "🤖 Включен" if data.ai_enabled else "🛡 Выключен"
+            await bot.send_message(
+                data.chat_id,
+                f"🎉 <b>Gruppas OS успешно настроена для чата «{chat_title}»!</b>\n\n"
+                f"💰 Валюта: <b>{data.currency_name}</b>\n"
+                f"⚖️ ИИ-модератор: {ai_status}\n\n"
+                f"<i>Игроки могут открыть свой профиль командой /profile, а админы — через /start в ЛС.</i>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка отправки в чат: {e}")
 
     return {"status": "ok"}
 
@@ -193,6 +198,15 @@ def add_chat_rule(data: RuleCreateModel):
     conn.commit()
     conn.close()
     return {"status": "rule_added"}
+
+@app.post("/api/rules/delete")
+def delete_chat_rule(data: RuleDeleteModel):
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute("DELETE FROM rules WHERE id = ? AND chat_id = ?", (data.rule_id, data.chat_id))
+    conn.commit()
+    conn.close()
+    return {"status": "rule_deleted"}
 
 # --- КОМАНДЫ TELEGRAM БОТА ---
 @dp.message(Command("setup"), F.chat.type.in_({"group", "supergroup"}))
@@ -222,49 +236,67 @@ async def cmd_group_setup(message: types.Message):
 
 @dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_profile(message: types.Message):
-    bot_info = await bot.get_me()
     app_url = f"{WEBAPP_URL}?chat_id={message.chat.id}&v={int(time.time())}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👤 Открыть личный кабинет", web_app=WebAppInfo(url=app_url))]
+        [InlineKeyboardButton(text="👤 Открыть приложение Gruppas OS", web_app=WebAppInfo(url=app_url))]
     ])
     await message.answer(
-        f"👤 <b>Личный кабинет участника</b>\n\n"
-        f"Игрок: {message.from_user.mention_html()}\n"
-        f"Нажмите кнопку ниже, чтобы открыть ваш профиль, баланс и правила чата:",
+        f"👤 <b>Экосистема Gruppas OS</b>\n\n"
+        f"Участник: {message.from_user.mention_html()}\n"
+        f"Нажмите кнопку ниже, чтобы открыть приложение:",
         parse_mode="HTML",
         reply_markup=kb
     )
 
 @dp.message(Command("start"), F.chat.type == "private")
 async def cmd_start_private(message: types.Message):
+    user_id = message.from_user.id
     conn = sqlite3.connect("gruppas.db")
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
-    chats = cur.execute("SELECT * FROM chats WHERE owner_id = ?", (message.from_user.id,)).fetchall()
+    configured_chats = cur.execute("SELECT * FROM chats WHERE is_configured = 1").fetchall()
+    
+    accessible_chats = []
+    for chat in configured_chats:
+        chat_id = chat['chat_id']
+        is_owner = (chat['owner_id'] == user_id)
+        in_players = cur.execute("SELECT 1 FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
+        
+        if is_owner or in_players:
+            accessible_chats.append(chat)
+        else:
+            try:
+                member = await bot.get_chat_member(chat_id, user_id)
+                if member.status not in ["left", "kicked"]:
+                    cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
+                    conn.commit()
+                    accessible_chats.append(chat)
+            except Exception:
+                pass
+                
     conn.close()
     
-    if chats:
+    if accessible_chats:
         kb_buttons = []
-        for chat in chats:
+        for chat in accessible_chats:
             panel_url = f"{WEBAPP_URL}?chat_id={chat['chat_id']}&v={int(time.time())}"
             chat_title = chat["title"] or f"Чат #{chat['chat_id']}"
             kb_buttons.append([
-                InlineKeyboardButton(text=f"🛡 Админ-панель: {chat_title}", web_app=WebAppInfo(url=panel_url))
+                InlineKeyboardButton(text=f"📱 Открыть: {chat_title}", web_app=WebAppInfo(url=panel_url))
             ])
             
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await message.answer(
-            f"🎛 <b>Панель управления Gruppas OS</b>\n\n"
-            f"Привет, <b>{message.from_user.full_name}</b>! Ваши чаты успешно привязаны. "
-            f"Выберите нужный чат для администрирования ниже:",
+            f"🎛 <b>Gruppas OS — Центр управления</b>\n\n"
+            f"Привет, <b>{message.from_user.full_name}</b>! Доступные вам чаты:",
             parse_mode="HTML",
             reply_markup=kb
         )
     else:
         await message.answer(
             "👋 Добро пожаловать в <b>Gruppas OS</b>!\n\n"
-            "Добавьте меня в ваш групповой чат, выдайте права администратора и отправьте команду <b>/setup</b>.",
+            "Вы пока не состоите ни в одном настроенном чате. Добавьте меня в групповой чат, выдайте права администратора и отправьте команду <b>/setup</b>.",
             parse_mode="HTML"
         )
 
