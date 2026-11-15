@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Gruppas OS — Управление сообществом</title>
+<title>Gruppas OS — Мастер настройки</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -18,46 +18,23 @@
   --text-desc: #555555;
   --title-color: #1e1b4b;
   --brand-color: #4a1c80;
-  --panel-bg: rgba(255, 255, 255, 0.55);
-  --panel-border: rgba(255, 255, 255, 0.7);
-  --card-bg: rgba(255, 255, 255, 0.65);
-  --card-border: rgba(255, 255, 255, 0.6);
-  --card-shadow: rgba(0, 0, 0, 0.05);
-  --info-box-bg: rgba(124, 58, 237, 0.08);
-  --info-box-border: rgba(124, 58, 237, 0.25);
-  --info-box-title: #7c3aed;
-  --input-bg: rgba(255, 255, 255, 0.7);
-}
-
-[data-theme="dark"] {
-  --bg-gradient: radial-gradient(900px 500px at 20% 20%, rgba(147, 51, 234, 0.25), transparent 60%),
-                 radial-gradient(900px 500px at 80% 70%, rgba(59, 130, 246, 0.2), transparent 60%),
-                 linear-gradient(135deg, #0b0c10, #13111c 45%, #0d131f);
-  --text-main: #f3f4f6;
-  --text-desc: #9ca3af;
-  --title-color: #f5f3ff;
-  --brand-color: #e9d5ff;
-  --panel-bg: rgba(20, 18, 33, 0.65);
-  --panel-border: rgba(255, 255, 255, 0.1);
-  --card-bg: rgba(20, 18, 33, 0.75);
-  --card-border: rgba(147, 51, 234, 0.25);
-  --card-shadow: rgba(0, 0, 0, 0.45);
-  --info-box-bg: rgba(124, 58, 237, 0.15);
-  --info-box-border: rgba(147, 51, 234, 0.35);
-  --info-box-title: #c084fc;
-  --input-bg: rgba(255, 255, 255, 0.06);
+  --panel-bg: rgba(255, 255, 255, 0.65);
+  --panel-border: rgba(255, 255, 255, 0.8);
+  --card-bg: rgba(255, 255, 255, 0.8);
+  --card-border: rgba(255, 255, 255, 0.7);
+  --card-shadow: rgba(0, 0, 0, 0.06);
+  --input-bg: rgba(255, 255, 255, 0.9);
 }
 
 body {
   margin: 0;
-  padding: 14px 14px 92px 14px;
+  padding: 16px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
   color: var(--text-main);
   min-height: 100vh;
   background: var(--bg-gradient);
   background-size: 200% 200%;
   animation: bgMove 14s ease-in-out infinite;
-  transition: background 0.5s ease, color 0.3s ease;
 }
 
 @keyframes bgMove {
@@ -66,41 +43,29 @@ body {
   100% { background-position: 0% 50%; }
 }
 
+.setup-header { margin-bottom: 20px; }
+.progress-container { display: flex; gap: 6px; margin-bottom: 12px; }
+.progress-bar {
+  flex: 1; height: 4px;
+  background: rgba(124, 58, 237, 0.2);
+  border-radius: 4px; overflow: hidden; transition: 0.4s;
+}
+.progress-bar.active { background: linear-gradient(90deg, #a855f7, #7c3aed); }
+
 .top-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--panel-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--panel-border);
-  padding: 8px 12px;
-  border-radius: 18px;
-  box-shadow: 0 8px 25px var(--card-shadow);
-  margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--panel-bg); backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px); border: 1px solid var(--panel-border);
+  padding: 10px 16px; border-radius: 18px; box-shadow: 0 8px 25px var(--card-shadow);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 900;
-  color: var(--brand-color);
-  font-size: 16px;
-}
-
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 900; color: var(--brand-color); font-size: 16px; }
 .logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 900;
-  font-size: 17px;
-  color: white;
+  width: 36px; height: 36px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 18px; color: white;
   background: linear-gradient(135deg, #c14cff, #7a4cff);
-  box-shadow: 0 0 12px rgba(193, 76, 255, .9);
+  box-shadow: 0 0 14px rgba(193, 76, 255, .9);
   animation: neonPulse 2s ease-in-out infinite alternate;
 }
 
@@ -110,317 +75,176 @@ body {
 }
 
 .card {
-  background: var(--card-bg);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-radius: 22px;
-  padding: 18px;
-  border: 1px solid var(--card-border);
-  box-shadow: 0 12px 30px var(--card-shadow);
-  margin-bottom: 14px;
+  background: var(--card-bg); backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px); border-radius: 24px;
+  padding: 22px; border: 1px solid var(--card-border);
+  box-shadow: 0 15px 35px var(--card-shadow); margin-bottom: 16px;
+  animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .badge {
-  font-size: 11px;
-  font-weight: 800;
-  padding: 4px 10px;
-  border-radius: 8px;
-  text-transform: uppercase;
-  display: inline-block;
+  font-size: 11px; font-weight: 800; padding: 5px 12px; border-radius: 8px;
+  text-transform: uppercase; display: inline-block;
+  background: rgba(168, 85, 247, 0.15); color: #7c3aed;
+  border: 1px solid rgba(168, 85, 247, 0.3); margin-bottom: 12px;
 }
-.badge.ok { background: rgba(34, 197, 94, 0.2); color: #16a34a; border: 1px solid rgba(34, 197, 94, 0.3); }
-.badge.rank { background: rgba(168, 85, 247, 0.2); color: #9333ea; border: 1px solid rgba(168, 85, 247, 0.35); }
 
-.btn {
-  width: 100%;
-  padding: 13px 18px;
-  border-radius: 14px;
-  font-weight: 800;
-  font-size: 14px;
-  color: white;
-  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-  border: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  box-shadow: 0 6px 18px rgba(109, 40, 217, 0.25);
-}
+h3 { margin: 0 0 8px 0; font-size: 20px; color: var(--title-color); font-weight: 900; }
+p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-height: 1.5; }
 
 .input-field {
-  width: 100%;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--panel-border);
-  background: var(--input-bg);
-  color: var(--text-main);
-  font-size: 14px;
-  margin-bottom: 10px;
-  outline: none;
+  width: 100%; padding: 14px; border-radius: 14px;
+  border: 1px solid var(--panel-border); background: var(--input-bg);
+  color: var(--text-main); font-size: 15px; font-weight: 600;
+  margin-bottom: 14px; outline: none; transition: 0.2s;
+}
+.input-field:focus { border-color: #a855f7; box-shadow: 0 0 10px rgba(168, 85, 247, 0.2); }
+
+.btn {
+  width: 100%; padding: 15px; border-radius: 14px; font-weight: 800; font-size: 15px;
+  color: white; background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  border: none; cursor: pointer; display: inline-flex; align-items: center;
+  justify-content: center; gap: 8px; box-shadow: 0 8px 20px rgba(109, 40, 217, 0.3);
 }
 
-.rule-item {
-  background: var(--info-box-bg);
-  border: 1px solid var(--info-box-border);
-  border-radius: 14px;
-  padding: 12px 14px;
-  margin-bottom: 10px;
+#page-loading { text-align: center; padding: 40px 20px; }
+.spinner-ring {
+  width: 64px; height: 64px; border: 5px solid rgba(124, 58, 237, 0.15);
+  border-top: 5px solid #7c3aed; border-radius: 50%;
+  animation: spin 1s linear infinite; margin: 0 auto 20px auto;
 }
-.rule-code { font-weight: 900; color: var(--info-box-title); font-size: 13px; margin-bottom: 4px; }
-
-.bottom-nav {
-  position: fixed;
-  bottom: 12px;
-  left: 12px;
-  right: 12px;
-  background: var(--panel-bg);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid var(--panel-border);
-  border-radius: 20px;
-  display: flex;
-  justify-content: space-around;
-  padding: 6px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-  z-index: 50;
-}
-.nav-tab {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 4px;
-  border-radius: 14px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-desc);
-  cursor: pointer;
-}
-.nav-tab.active {
-  background: linear-gradient(135deg, #a855f7, #7c3aed);
-  color: white;
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.35);
-}
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
 .page { display: none; }
 .page.active { display: block; }
-h3 { margin: 0 0 10px 0; font-size: 17px; color: var(--title-color); }
-p.sub { margin: 0 0 12px 0; font-size: 13px; color: var(--text-desc); line-height: 1.45; }
 </style>
 </head>
 <body>
 
-<div class="top-bar">
-  <div class="brand">
-    <div class="logo">G</div>
-    <div>
-      <div>Gruppas OS</div>
-      <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="chatTitle">Загрузка чата...</div>
+<div class="setup-header">
+  <div class="progress-container">
+    <div class="progress-bar active" id="p1"></div>
+    <div class="progress-bar" id="p2"></div>
+    <div class="progress-bar" id="p3"></div>
+  </div>
+
+  <div class="top-bar">
+    <div class="brand">
+      <div class="logo">G</div>
+      <div>
+        <div>Gruppas OS</div>
+        <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="headerSubtitle">Настройка экосистемы</div>
+      </div>
     </div>
   </div>
-  <button class="icon-btn" onclick="toggleTheme()" style="width:36px; height:36px; border-radius:12px; background:var(--input-bg); border:1px solid var(--panel-border); color:var(--text-main);">
-    <i class="fa-solid fa-moon" id="themeIcon"></i>
-  </button>
 </div>
 
-<!-- ЭКРАН 1: МАСТЕР ПЕРВОНАЧАЛЬНОЙ НАСТРОЙКИ (WIZARD) -->
-<div id="page-setup" class="page">
+<div id="page-step1" class="page active">
   <div class="card">
-    <span class="badge rank" style="margin-bottom: 8px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Первый запуск</span>
-    <h3>Настройка экосистемы чата</h3>
-    <p class="sub">Укажи базовые параметры для этой группы перед запуском модерации и банка.</p>
-    
-    <label style="font-size: 12px; font-weight: 700;">Название валюты чата:</label>
-    <input type="text" class="input-field" id="setupCurrency" value="G-Coins" placeholder="Напр. Группкоины">
-    
-    <label style="font-size: 12px; font-weight: 700; display: block; margin-top: 6px;">Авто-модерация ИИ:</label>
+    <span class="badge"><i class="fa-solid fa-coins"></i> Шаг 1 из 3</span>
+    <h3>Экономика и Валюта</h3>
+    <p class="sub">Как будет называться внутренняя валюта чата?</p>
+    <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">Название валюты:</label>
+    <input type="text" class="input-field" id="setupCurrency" value="G-Coins">
+    <button class="btn" onclick="nextStep(2)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
+  </div>
+</div>
+
+<div id="page-step2" class="page">
+  <div class="card">
+    <span class="badge"><i class="fa-solid fa-brain"></i> Шаг 2 из 3</span>
+    <h3>ИИ-Судья и Автомодерация</h3>
+    <p class="sub">Включить автомодерацию правил через ИИ?</p>
     <select class="input-field" id="setupAi">
-      <option value="true">Включить ИИ-судью (авто-муты за правила)</option>
-      <option value="false">Выключить (только ручное управление)</option>
+      <option value="true">🤖 Включить ИИ-модератора (авто-муты 24/7)</option>
+      <option value="false">🛡 Только ручной контроль админов</option>
     </select>
-
-    <button class="btn" onclick="saveInitialSetup()" style="margin-top: 10px;">
-      <i class="fa-solid fa-check"></i> Сохранить и открыть панель
-    </button>
+    <button class="btn" onclick="nextStep(3)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
   </div>
 </div>
 
-<!-- ЭКРАН 2: ГЛАВНЫЙ ДАШБОРД -->
-<div id="page-home" class="page">
-  <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-      <span class="badge ok"><i class="fa-solid fa-shield-check"></i> Экосистема активна</span>
-      <span class="badge rank" id="dashRole">Администратор</span>
-    </div>
-    <h3>Управление группой</h3>
-    <p class="sub">Чат успешно привязан к платформе Gruppas OS. ИИ-модерирование и банк функционируют в штатном режиме.</p>
+<div id="page-step3" class="page">
+  <div class="card" id="page-loading">
+    <div class="spinner-ring"></div>
+    <h3 style="margin-bottom: 6px;">Настройка экосистемы...</h3>
+    <p class="sub" style="margin-bottom: 0;">Связываемся с сервером на Render, создаем базу данных и активируем ИИ. Пожалуйста, подождите.</p>
   </div>
 
-  <div class="card" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: white;">
-    <div style="font-size: 12px; font-weight: 700; opacity: 0.85;">КАЗНА ЧАТА</div>
-    <div style="font-size: 26px; font-weight: 900; margin: 8px 0;" id="dashCurrencyName">G-Coins</div>
-    <div style="font-size: 13px; opacity: 0.9;">Все переводы и экономика синхронизированы с базой данных.</div>
+  <div class="card" id="page-success" style="display: none; text-align: center;">
+    <div style="font-size: 50px; color: #16a34a; margin-bottom: 12px;"><i class="fa-solid fa-circle-check"></i></div>
+    <h3>Всё готово!</h3>
+    <p class="sub">Чат успешно привязан к Gruppas OS.</p>
+    <button class="btn" onclick="location.reload()"><i class="fa-solid fa-rocket"></i> Открыть панель</button>
   </div>
 </div>
-
-<!-- ЭКРАН 3: ПРАВИЛА И АДМИНКА -->
-<div id="page-rules" class="page">
-  <div class="card">
-    <h3><i class="fa-solid fa-sliders" style="color: #a855f7;"></i> Добавить правило</h3>
-    <input type="text" class="input-field" id="ruleCode" placeholder="Пункт (напр. 1.1 • Спам)">
-    <input type="text" class="input-field" id="ruleText" placeholder="Описание и наказание...">
-    <button class="btn" onclick="addRule()"><i class="fa-solid fa-plus"></i> Добавить в базу ИИ</button>
-  </div>
-
-  <div class="card">
-    <h3>Свод активных правил</h3>
-    <div id="rulesContainer">
-      <p class="sub">Загрузка списка правил...</p>
-    </div>
-  </div>
-</div>
-
-<!-- НИЖНЯЯ НАВИГАЦИЯ -->
-<nav class="bottom-nav" id="bottomNav" style="display: none;">
-  <div class="nav-tab active" data-tab="home" onclick="switchTab('home')">
-    <i class="fa-solid fa-house"></i>
-    <span>Главная</span>
-  </div>
-  <div class="nav-tab" data-tab="rules" onclick="switchTab('rules')">
-    <i class="fa-solid fa-book"></i>
-    <span>Правила</span>
-  </div>
-</nav>
 
 <script>
-// Замени на URL твоего развернутого бэкенда на Render после деплоя
-const API_URL = "https://tvo-servis.onrender.com"; 
+const API_URL = "https://gruppas-defenderupdate.onrender.com"; 
 
 const tg = window.Telegram?.WebApp;
 tg?.expand();
 
 const urlParams = new URLSearchParams(window.location.search);
-const chatId = urlParams.get('chat_id') || "-100123456789"; // Дефолт для теста
+const chatId = urlParams.get('chat_id') || "-100123456789";
 const userId = tg?.initDataUnsafe?.user?.id || 12345;
 
-let chatData = null;
+function setProgress(step) {
+  document.querySelectorAll('.progress-bar').forEach((bar, idx) => {
+    if (idx < step) bar.classList.add('active');
+    else bar.classList.remove('active');
+  });
+}
 
-// Загрузка данных чата с бэкенда при открытии Mini App
-async function loadChatConfig() {
-  try {
-    const res = await fetch(`${API_URL}/api/chat/${chatId}?user_id=${userId}`);
-    if (!res.ok) throw new Error("Чат не найден");
-    chatData = await res.json();
-    
-    document.getElementById('chatTitle').innerText = chatData.chat.title || "Групповой чат";
-    
-    if (chatData.chat.is_configured === 0) {
-      // Если чат еще не настроен — показываем мастер настройки
-      switchTab('setup');
-      document.getElementById('bottomNav').style.display = 'none';
-    } else {
-      // Если настроен — открываем дашборд
-      renderDashboard();
-      switchTab('home');
-      document.getElementById('bottomNav').style.display = 'flex';
-    }
-  } catch (e) {
-    // Режим предпросмотра, если бэкенд еще не запущен
-    document.getElementById('chatTitle').innerText = "Режим предпросмотра";
-    switchTab('setup');
+function nextStep(step) {
+  if (step === 2) {
+    document.getElementById('page-step1').classList.remove('active');
+    document.getElementById('page-step2').classList.add('active');
+    setProgress(2);
+    document.getElementById('headerSubtitle').innerText = "Настройка ИИ";
+  } else if (step === 3) {
+    document.getElementById('page-step2').classList.remove('active');
+    document.getElementById('page-step3').classList.add('active');
+    setProgress(3);
+    document.getElementById('headerSubtitle').innerText = "Применение параметров";
+    submitSetup();
   }
 }
 
-function renderDashboard() {
-  if (!chatData) return;
-  document.getElementById('dashCurrencyName').innerText = chatData.chat.currency_name;
-  document.getElementById('dashRole').innerText = chatData.is_admin ? "Администратор" : "Участник";
-  
-  const container = document.getElementById('rulesContainer');
-  container.innerHTML = '';
-  if (chatData.rules.length === 0) {
-    container.innerHTML = '<p class="sub">Правила пока не добавлены.</p>';
-  } else {
-    chatData.rules.forEach(r => {
-      container.innerHTML += `
-        <div class="rule-item">
-          <div class="rule-code">${r.code}</div>
-          <div style="font-size: 13px;">${r.description} (Мут: ${r.mute_minutes} мин)</div>
-        </div>
-      `;
-    });
-  }
-}
-
-async function saveInitialSetup() {
-  const currency_name = document.getElementById('setupCurrency').value;
+async function submitSetup() {
+  const currency_name = document.getElementById('setupCurrency').value || "G-Coins";
   const ai_enabled = document.getElementById('setupAi').value === 'true';
-  
+
   try {
-    await fetch(`${API_URL}/api/chat/setup`, {
+    const response = await fetch(`${API_URL}/api/chat/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
     });
-    alert('Настройки успешно сохранены!');
-    loadChatConfig();
-  } catch (e) {
-    alert('Ошибка сохранения. Проверь подключение к бэкенду.');
+
+    if (!response.ok) throw new Error("Ошибка сервера");
+
+    setTimeout(() => {
+      document.getElementById('page-loading').style.display = 'none';
+      document.getElementById('page-success').style.display = 'block';
+      document.getElementById('headerSubtitle').innerText = "Готово к работе";
+    }, 1200);
+
+  } catch (err) {
+    setTimeout(() => {
+      document.getElementById('page-loading').innerHTML = `
+        <div style="font-size: 40px; color: #ef4444; margin-bottom: 10px;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <h3>Сервер просыпается</h3>
+        <p class="sub">Бесплатный сервер на Render запускается. Нажмите кнопку ниже.</p>
+        <button class="btn" onclick="location.reload()">Повторить попытку</button>
+      `;
+    }, 1000);
   }
 }
-
-async function addRule() {
-  const code = document.getElementById('ruleCode').value;
-  const description = document.getElementById('ruleText').value;
-  if (!code || !description) return alert('Заполни все поля!');
-
-  try {
-    await fetch(`${API_URL}/api/rules/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), code, description, mute_minutes: 60 })
-    });
-    alert('Правило добавлено!');
-    document.getElementById('ruleCode').value = '';
-    document.getElementById('ruleText').value = '';
-    loadChatConfig();
-  } catch (e) {
-    alert('Ошибка при добавлении правила.');
-  }
-}
-
-// Тема
-function applyTheme(theme) {
-  const icon = document.getElementById('themeIcon');
-  if (theme === 'dark') {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    icon.className = 'fa-solid fa-sun';
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-    icon.className = 'fa-solid fa-moon';
-  }
-}
-const savedTheme = localStorage.getItem('site-theme') || 'dark';
-applyTheme(savedTheme);
-
-function toggleTheme() {
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const next = isDark ? 'light' : 'dark';
-  localStorage.setItem('site-theme', next);
-  applyTheme(next);
-}
-
-function switchTab(tabName) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('page-' + tabName).classList.add('active');
-  const activeTab = document.querySelector(`.nav-tab[data-tab="${tabName}"]`);
-  if (activeTab) activeTab.classList.add('active');
-}
-
-loadChatConfig();
 </script>
 </body>
 </html>
