@@ -15,8 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 AI_API_KEY = os.getenv("AI_API_KEY", "ТВОЙ_API_КЛЮЧ_ИИ")
-# Ссылка на твоё Mini App (например, на GitHub Pages)
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://pkhark14-beep.github.io/gruppas-webapp/")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://pkhark14-beep.github.io/gruppas-defenderupdate/")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -30,11 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ SQLITE ---
+# --- БАЗА ДАННЫХ ---
 def init_db():
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
-    # Таблица настроек для каждого отдельного чата
     cur.execute("""
         CREATE TABLE IF NOT EXISTS chats (
             chat_id INTEGER PRIMARY KEY,
@@ -45,7 +43,6 @@ def init_db():
             is_configured INTEGER DEFAULT 0
         )
     """)
-    # Таблица правил с привязкой к chat_id
     cur.execute("""
         CREATE TABLE IF NOT EXISTS rules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +57,7 @@ def init_db():
 
 init_db()
 
-# --- МОДЕЛИ ДАННЫХ ДЛЯ API ---
+# --- МОДЕЛИ ДАННЫХ ---
 class ChatSetupModel(BaseModel):
     chat_id: int
     user_id: int
@@ -74,7 +71,11 @@ class RuleCreateModel(BaseModel):
     description: str
     mute_minutes: int = 60
 
-# --- API ДЛЯ MINI APP ---
+# --- API ЭНДПОИНТЫ ---
+@app.get("/")
+def read_root():
+    return {"status": "Gruppas OS Backend is online!", "database": "connected"}
+
 @app.get("/api/chat/{chat_id}")
 def get_chat_config(chat_id: int, user_id: int):
     conn = sqlite3.connect("gruppas.db")
@@ -84,7 +85,7 @@ def get_chat_config(chat_id: int, user_id: int):
     chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
     if not chat:
         conn.close()
-        raise HTTPException(status_code=404, detail="Чат не найден. Сначала пропишите /setup в группе.")
+        raise HTTPException(status_code=404, detail="Чат не найден. Пропишите /setup в группе.")
     
     rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
     conn.close()
@@ -102,7 +103,7 @@ def save_chat_setup(data: ChatSetupModel):
     chat = cur.execute("SELECT owner_id FROM chats WHERE chat_id = ?", (data.chat_id,)).fetchone()
     if not chat or chat[0] != data.user_id:
         conn.close()
-        raise HTTPException(status_code=403, detail="Нет прав администратора для этого чата")
+        raise HTTPException(status_code=403, detail="Нет прав администратора")
     
     cur.execute("""
         UPDATE chats 
@@ -130,16 +131,13 @@ def add_chat_rule(data: RuleCreateModel):
     conn.close()
     return {"status": "rule_added"}
 
-# --- КОМАНДЫ БОТА В ГРУППЕ И ЛИЧКЕ ---
-
-# 1. Команда /setup внутри группового чата
+# --- КОМАНДЫ TELEGRAM БОТА ---
 @dp.message(Command("setup"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_setup(message: types.Message):
     member = await bot.get_chat_member(message.chat.id, message.from_user.id)
     if member.status not in ["creator", "administrator"]:
         return await message.reply("Настраивать экосистему чата могут только администраторы!")
 
-    # Регистрируем чат в базе, если его ещё нет
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     cur.execute("""
@@ -150,7 +148,6 @@ async def cmd_group_setup(message: types.Message):
     conn.close()
 
     bot_info = await bot.get_me()
-    # Генерируем реферальную Deep Link ссылку с ID чата
     setup_link = f"https://t.me/{bot_info.username}?start=setup_{message.chat.id}"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -159,33 +156,31 @@ async def cmd_group_setup(message: types.Message):
     await message.answer(
         f"🛠 <b>Инициализация Gruppas OS для «{message.chat.title}»</b>\n\n"
         f"Администратор: {message.from_user.mention_html()}\n"
-        f"Нажмите кнопку ниже, чтобы перейти в панель первоначальной настройки правил и экономики:",
+        f"Нажмите кнопку ниже, чтобы запустить мастер настройки:",
         parse_mode="HTML",
         reply_markup=kb
     )
 
-# 2. Обработка Deep Link перехода в личке бота (?start=setup_-100...)
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_deeplink(message: types.Message, command: CommandObject):
     args = command.args
     if args and args.startswith("setup_"):
         chat_id = args.replace("setup_", "")
-        # Открываем Mini App и передаём туда ID чата через GET-параметр
         app_url = f"{WEBAPP_URL}?chat_id={chat_id}"
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Открыть панель настройки", web_app=WebAppInfo(url=app_url))]
+            [InlineKeyboardButton(text="🚀 Открыть мастер настройки", web_app=WebAppInfo(url=app_url))]
         ])
         await message.answer(
-            "Панель управления чатом готова к запуску. Нажмите кнопку ниже:",
+            "Панель конфигурации чата готова. Нажмите кнопку ниже:",
             reply_markup=kb
         )
     else:
-        await message.answer("Добро пожаловать в Gruppas OS! Добавьте меня в группу и напишите /setup.")
+        await message.answer("Добро пожаловать в Gruppas OS! Добавьте бота в группу и напишите /setup.")
 
 @dp.message(Command("start"))
 async def cmd_start_regular(message: types.Message):
-    await message.answer("Привет! Добавь меня в свой групповой чат, выдай права админа и напиши /setup для привязки.")
+    await message.answer("Привет! Добавьте меня в групповой чат, выдайте права администратора и отправьте /setup.")
 
 async def start_telegram_bot():
     await dp.start_polling(bot)
