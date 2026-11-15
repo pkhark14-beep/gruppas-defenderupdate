@@ -52,6 +52,15 @@ def init_db():
             mute_minutes INTEGER DEFAULT 60
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            chat_id INTEGER,
+            user_id INTEGER,
+            username TEXT,
+            balance INTEGER DEFAULT 100,
+            PRIMARY KEY (chat_id, user_id)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -91,7 +100,7 @@ async def verify_chat_admin(chat_id: int, user_id: int):
         return {"is_admin": False, "status": "waiting", "error": str(e)}
 
 @app.get("/api/chat/{chat_id}")
-def get_chat_config(chat_id: int, user_id: int):
+async def get_chat_config(chat_id: int, user_id: int):
     conn = sqlite3.connect("gruppas.db")
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -99,25 +108,44 @@ def get_chat_config(chat_id: int, user_id: int):
     chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
     if not chat:
         cur.execute("""
-            INSERT OR REPLACE INTO chats (chat_id, title, owner_id, currency_name, ai_enabled, is_configured)
+            INSERT OR IGNORE INTO chats (chat_id, title, owner_id, currency_name, ai_enabled, is_configured)
             VALUES (?, ?, ?, 'G-Coins', 1, 0)
         """, (chat_id, f"Чат #{chat_id}", user_id))
         conn.commit()
         chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
     
+    # Проверяем, является ли пользователь админом или владельцем чата
+    is_admin = False
+    if chat and chat['owner_id'] == user_id:
+        is_admin = True
+    else:
+        try:
+            member = await bot.get_chat_member(chat_id, user_id)
+            if member.status in ["creator", "administrator"]:
+                is_admin = True
+        except Exception:
+            if chat and chat['owner_id'] == user_id:
+                is_admin = True
+
+    # Получаем или создаем баланс игрока
+    player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
+    if not player:
+        cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
+        conn.commit()
+        player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
+
     rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
     conn.close()
     
     return {
-        "chat": dict(chat),
-        "is_admin": True,
+        "chat": dict(chat) if chat else {},
+        "is_admin": is_admin,
+        "player": dict(player) if player else {},
         "rules": [dict(r) for r in rules]
     }
 
 @app.post("/api/chat/setup")
 async def save_chat_setup(data: ChatSetupModel):
-    logging.info(f"📥 ПОЛУЧЕНЫ ДАННЫЕ НАСТРОЙКИ ДЛЯ ЧАТА: {data.chat_id}, ЮЗЕР: {data.user_id}, ВАЛЮТА: {data.currency_name}, ИИ: {data.ai_enabled}")
-    
     conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     
@@ -146,12 +174,11 @@ async def save_chat_setup(data: ChatSetupModel):
             f"🎉 <b>Gruppas OS успешно настроена для чата «{chat_title}»!</b>\n\n"
             f"💰 Валюта: <b>{data.currency_name}</b>\n"
             f"⚖️ ИИ-модератор: {ai_status}\n\n"
-            f"<i>Система полностью активирована. Напишите мне в ЛС команду /start для доступа к панели управления.</i>",
+            f"<i>Администраторы могут управлять через /start в ЛС, а игроки могут проверить профиль командой /profile.</i>",
             parse_mode="HTML"
         )
-        logging.info(f"✅ Успешно отправлено уведомление в чат {data.chat_id}")
     except Exception as e:
-        logging.error(f"❌ ОШИБКА ОТПРАВКИ СООБЩЕНИЯ В ЧАТ {data.chat_id}: {e}")
+        logging.error(f"Ошибка отправки в чат: {e}")
 
     return {"status": "ok"}
 
@@ -193,6 +220,21 @@ async def cmd_group_setup(message: types.Message):
         reply_markup=kb
     )
 
+@dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_group_profile(message: types.Message):
+    bot_info = await bot.get_me()
+    app_url = f"{WEBAPP_URL}?chat_id={message.chat.id}&v={int(time.time())}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Открыть личный кабинет", web_app=WebAppInfo(url=app_url))]
+    ])
+    await message.answer(
+        f"👤 <b>Личный кабинет участника</b>\n\n"
+        f"Игрок: {message.from_user.mention_html()}\n"
+        f"Нажмите кнопку ниже, чтобы открыть ваш профиль, баланс и правила чата:",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
 @dp.message(Command("start"), F.chat.type == "private")
 async def cmd_start_private(message: types.Message):
     conn = sqlite3.connect("gruppas.db")
@@ -208,21 +250,21 @@ async def cmd_start_private(message: types.Message):
             panel_url = f"{WEBAPP_URL}?chat_id={chat['chat_id']}&v={int(time.time())}"
             chat_title = chat["title"] or f"Чат #{chat['chat_id']}"
             kb_buttons.append([
-                InlineKeyboardButton(text=f"🛡 Управлять: {chat_title}", web_app=WebAppInfo(url=panel_url))
+                InlineKeyboardButton(text=f"🛡 Админ-панель: {chat_title}", web_app=WebAppInfo(url=panel_url))
             ])
             
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await message.answer(
             f"🎛 <b>Панель управления Gruppas OS</b>\n\n"
             f"Привет, <b>{message.from_user.full_name}</b>! Ваши чаты успешно привязаны. "
-            f"Выберите нужный чат для настройки ниже:",
+            f"Выберите нужный чат для администрирования ниже:",
             parse_mode="HTML",
             reply_markup=kb
         )
     else:
         await message.answer(
             "👋 Добро пожаловать в <b>Gruppas OS</b>!\n\n"
-            "Чтобы начать работу, добавьте меня в ваш групповой чат, выдайте права администратора и отправьте команду <b>/setup</b>.",
+            "Добавьте меня в ваш групповой чат, выдайте права администратора и отправьте команду <b>/setup</b>.",
             parse_mode="HTML"
         )
 
