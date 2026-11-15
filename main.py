@@ -71,15 +71,6 @@ def init_db():
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS rules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER,
-                code TEXT,
-                description TEXT,
-                mute_minutes INTEGER DEFAULT 60
-            )
-        """)
         conn.commit()
 
 init_db()
@@ -113,45 +104,31 @@ def upsert_member(chat_id: int, user: types.User, role: str = None):
         upsert_member_with_conn(conn, chat_id, user, role)
         conn.commit()
 
-async def sync_chat_admins(chat_id: int):
-    try:
-        admins = await bot.get_chat_administrators(chat_id)
-        with get_db() as conn:
-            cur = conn.cursor()
-            for adm in admins:
-                if adm.user.is_bot:
-                    continue
-                role = "creator" if adm.status == "creator" else "administrator"
-                if role == "creator":
-                    cur.execute("UPDATE chats SET owner_id = ? WHERE chat_id = ?", (adm.user.id, chat_id))
-                upsert_member_with_conn(conn, chat_id, adm.user, role=role)
-            conn.commit()
-    except Exception as e:
-        logging.error(f"Ошибка sync_chat_admins: {e}")
-
 async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool, message_text: str) -> dict:
     if not AI_API_KEY or AI_API_KEY == "ТВОЙ_API_КЛЮЧ_GROK":
         return {"violated": False}
 
     system_prompt = (
-        "Ты — умный ИИ-модератор чата в системе Gruppas OS. "
-        "Твоя задача — проверять сообщения пользователей строго по правилам этого чата.\n\n"
-        f"ПРАВИЛА ЧАТА:\n{rules_text}\n\n"
-        "ИНСТРУКЦИЯ:\n"
-        "1. Внимательно прочитай сообщение и сопоставь с правилами выше.\n"
-        "2. Учитывай контекст, шутки и обычный разговор. Не наказывай за невинные фразы.\n"
-        "3. Если нарушение явное — определи пункт правила и точное время мута в минутах из текста правил "
-        "(если в правиле написано '1 час' -> 60, 'сутки' -> 1440, 'навсегда' -> 0, если время не указано -> 60).\n"
-        f"4. Статус пользователя: {'Gruppas Prem (учитывай привилегии, если они прописаны в правилах)' if is_prem else 'Обычный участник'}.\n"
-        "5. Ответь СТРОГО в формате JSON без markdown-обертки:\n"
-        '{"violated": true/false, "rule_code": "пункт правила", "reason": "краткая причина", "mute_minutes": число_минут}'
+        "Ты — умный ИИ-модератор Grok в системе Gruppas OS. "
+        "Твоя задача — мгновенно анализировать сообщение участника по правилам этого чата.\n\n"
+        f"ПРАВИЛА ЧАТА И НАКАЗАНИЯ:\n{rules_text}\n\n"
+        "ИНСТРУКЦИЯ ДЛЯ АНАЛИЗА:\n"
+        "1. Сопоставь текст участника с правилами выше.\n"
+        "2. Если есть явное нарушение (мат, оскорбления, спам, запрещенные темы и т.д.):\n"
+        "   - Найди в тексте правил точное время наказания, которое установил администратор (например, если написано 'мут 1 час' -> вычлени 60 минут; 'мут 2 часа' -> 120; 'навсегда' -> 0).\n"
+        "   - Если время в правилах не указано вообще, по умолчанию ставь 60 минут.\n"
+        f"3. Статус пользователя: {'Gruppas Prem (учитывай смягчение, если оно прописано в правилах)' if is_prem else 'Обычный участник'}.\n"
+        "4. Верни СТРОГО JSON без markdown-обертки и лишних слов:\n"
+        '{"violated": true, "rule_code": "пункт или суть правила", "reason": "краткая причина", "mute_minutes": число_минут}\n'
+        "5. Если нарушений нет, верни СТРОГО:\n"
+        '{"violated": false}'
     )
 
     payload = {
         "model": "grok-2-latest",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Пользователь {user_name} написал: {message_text}"}
+            {"role": "user", "content": f"Участник {user_name} написал: {message_text}"}
         ],
         "temperature": 0.1
     }
@@ -163,7 +140,7 @@ async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.x.ai/v1/chat/completions", json=payload, headers=headers, timeout=10) as resp:
+            async with session.post("https://api.x.ai/v1/chat/completions", json=payload, headers=headers, timeout=8) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     raw_reply = data["choices"][0]["message"]["content"].strip()
@@ -180,22 +157,6 @@ class ChatSetupModel(BaseModel):
     currency_name: str
     ai_enabled: bool
     rules_text: str = ""
-
-class RuleCreateModel(BaseModel):
-    chat_id: int
-    user_id: int
-    code: str
-    description: str
-    mute_minutes: int = 60
-
-class RuleDeleteModel(BaseModel):
-    rule_id: int
-    chat_id: int
-
-class PremToggleModel(BaseModel):
-    chat_id: int
-    target_user_id: int
-    is_prem: bool
 
 @app.get("/")
 @app.head("/")
@@ -227,14 +188,13 @@ async def get_chat_config(chat_id: int, user_id: int):
             is_admin = True
 
         members_list = cur.execute("SELECT * FROM chat_members WHERE chat_id = ?", (chat_id,)).fetchall()
-        rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
         
         return {
             "chat": dict(chat) if chat else {},
             "is_admin": is_admin,
             "player": dict(member) if member else {"balance": 100, "role": "member", "is_prem": 0},
             "members": [dict(m) for m in members_list],
-            "rules": [dict(r) for r in rules]
+            "rules": []
         }
 
 @app.post("/api/chat/setup")
@@ -247,33 +207,6 @@ async def save_chat_setup(data: ChatSetupModel):
         """, (data.currency_name, int(data.ai_enabled), data.rules_text, data.chat_id))
         conn.commit()
     return {"status": "ok"}
-
-@app.post("/api/rules/add")
-def add_chat_rule(data: RuleCreateModel):
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
-            (data.chat_id, data.code, data.description, data.mute_minutes)
-        )
-        conn.commit()
-    return {"status": "rule_added"}
-
-@app.post("/api/rules/delete")
-def delete_chat_rule(data: RuleDeleteModel):
-    with get_db() as conn:
-        conn.execute("DELETE FROM rules WHERE id = ? AND chat_id = ?", (data.rule_id, data.chat_id))
-        conn.commit()
-    return {"status": "rule_deleted"}
-
-@app.post("/api/members/prem")
-def set_member_prem(data: PremToggleModel):
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE chat_members SET is_prem = ? WHERE chat_id = ? AND user_id = ?",
-            (int(data.is_prem), data.chat_id, data.target_user_id)
-        )
-        conn.commit()
-    return {"status": "updated"}
 
 @dp.my_chat_member()
 async def on_bot_status_change(event: types.ChatMemberUpdated):
@@ -295,9 +228,6 @@ async def on_bot_status_change(event: types.ChatMemberUpdated):
             """, (event.chat.id, event.chat.title, event.from_user.id, is_admin))
         conn.commit()
 
-    if is_admin:
-        await sync_chat_admins(event.chat.id)
-
 @dp.chat_member()
 async def on_user_join_or_update(event: types.ChatMemberUpdated):
     if event.chat.type not in ("group", "supergroup"):
@@ -308,11 +238,9 @@ async def on_user_join_or_update(event: types.ChatMemberUpdated):
         role = status if status in ("administrator", "creator") else "member"
         upsert_member(event.chat.id, user, role=role)
 
-# --- ПРИВАТНЫЙ ЧАТ: ОТКРЫТИЕ MINI APP НАПРЯМУЮ ---
 @dp.message(Command("start"), F.chat.type == "private")
 async def cmd_start_private(message: types.Message):
     user_id = message.from_user.id
-    
     with get_db() as conn:
         chats = conn.execute("""
             SELECT DISTINCT c.*, cm.role FROM chats c
@@ -324,7 +252,7 @@ async def cmd_start_private(message: types.Message):
         await message.answer(
             "👋 <b>Добро пожаловать в Gruppas OS!</b>\n\n"
             "Пока в базе нет чатов с вашим участием.\n"
-            "Просто напишите любое сообщение в вашей группе с ботом — и чат мгновенно появится здесь!",
+            "Напишите любое сообщение в группе с ботом — и чат мгновенно появится здесь!",
             parse_mode="HTML"
         )
         return
@@ -405,8 +333,8 @@ async def handle_group_messages(message: types.Message):
     
     if verdict.get("violated"):
         mute_mins = int(verdict.get("mute_minutes", 60))
-        rule_code = verdict.get("rule_code", "Правила чата")
-        reason = verdict.get("reason", "Нарушение правил")
+        rule_code = verdict.get("rule_code", "Нарушение правил")
+        reason = verdict.get("reason", "Нарушение правил чата")
         
         try:
             await message.delete()
@@ -421,6 +349,7 @@ async def handle_group_messages(message: types.Message):
                 permissions=ChatPermissions(can_send_messages=False),
                 until_date=until_date
             )
+            
             duration_str = f"{mute_mins} мин." if mute_mins > 0 else "навсегда"
             prem_badge = " 👑 [Gruppas Prem]" if is_prem else ""
             await bot.send_message(
@@ -433,7 +362,12 @@ async def handle_group_messages(message: types.Message):
                 parse_mode="HTML"
             )
         except Exception as e:
-            logging.error(f"Не удалось замутить: {e}")
+            logging.error(f"Не удалось замутить участника: {e}")
+            await bot.send_message(
+                chat_id,
+                f"⚠️ <b>У меня нет прав администратора</b> для ограничения участника {user.mention_html()}! Выдайте мне права администратора в чате.",
+                parse_mode="HTML"
+            )
 
 @app.on_event("startup")
 async def startup_event():
