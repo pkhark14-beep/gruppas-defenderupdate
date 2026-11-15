@@ -118,13 +118,14 @@ h3 { margin: 0 0 6px 0; font-size: 19px; color: var(--title-color); font-weight:
 h4 { margin: 0 0 10px 0; font-size: 15px; color: var(--title-color); font-weight: 800; }
 p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-height: 1.45; }
 
-.input-field {
+.input-field, textarea.input-field {
   width: 100%; padding: 13px; border-radius: 13px;
   border: 1px solid var(--panel-border); background: var(--input-bg);
   color: var(--text-main); font-size: 14px; font-weight: 600;
   margin-bottom: 12px; outline: none; transition: 0.2s;
+  font-family: inherit;
 }
-.input-field:focus { border-color: var(--accent); }
+.input-field:focus, textarea.input-field:focus { border-color: var(--accent); }
 
 .btn {
   width: 100%; padding: 14px; border-radius: 13px; font-weight: 800; font-size: 14px;
@@ -134,7 +135,6 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
   transition: transform 0.15s;
 }
 .btn:active { transform: scale(0.98); }
-.btn-danger { background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 6px 15px rgba(239, 68, 68, 0.25); padding: 8px 12px; width: auto; font-size: 12px; }
 
 .stat-box {
   background: var(--stat-bg); padding: 13px 15px; border-radius: 14px; margin-bottom: 10px;
@@ -148,11 +148,6 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
 }
 .cmd-code { font-family: monospace; font-weight: 800; color: var(--accent); font-size: 14px; }
 .cmd-desc { font-size: 12px; color: var(--text-desc); margin-top: 3px; }
-
-.rule-row {
-  background: var(--stat-bg); padding: 12px; border-radius: 12px; margin-bottom: 8px;
-  border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center; gap: 10px;
-}
 
 /* НИЖНЕЕ МЕНЮ ПРИЛОЖЕНИЯ (TAB BAR) */
 .bottom-nav {
@@ -192,7 +187,7 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
   </div>
 </div>
 
-<!-- БЫСТРАЯ ИНИЦИАЛИЗАЦИЯ ЧАТА (ЕСЛИ ЕЩЕ НЕ НАСТРОЕН) -->
+<!-- БЫСТРАЯ ИНИЦИАЛИЗАЦИЯ ЧАТА -->
 <div id="page-setup" class="page">
   <div class="card">
     <span class="badge"><i class="fa-solid fa-wand-magic-sparkles"></i> Первая настройка</span>
@@ -207,6 +202,9 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
       <option value="true">🤖 Включить ИИ-модератора (авто-муты)</option>
       <option value="false">🛡 Только ручной контроль</option>
     </select>
+
+    <label style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 5px;">Текст правил (с пунктами и сроками мута):</label>
+    <textarea class="input-field" id="quickRules" rows="5" placeholder="1.1 Оскорбления — мут 60 минут&#10;1.2 Спам — мут 1440 минут"></textarea>
 
     <button class="btn" onclick="quickSetupChat()"><i class="fa-solid fa-rocket"></i> Запустить систему</button>
   </div>
@@ -233,7 +231,7 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
   <div class="card">
     <h4><i class="fa-solid fa-scale-balanced"></i> Действующие правила чата</h4>
     <p class="sub">За нарушение этих правил ИИ-судья автоматически выдает мут.</p>
-    <div id="playerRulesList" style="font-size: 13px; color: var(--text-desc); line-height: 1.6;">
+    <div id="playerRulesList" style="font-size: 13px; color: var(--text-desc); line-height: 1.6; white-space: pre-wrap;">
       Правила еще не добавлены.
     </div>
   </div>
@@ -267,9 +265,9 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
 <!-- ВКЛАДКА 3: АДМИН-ПАНЕЛЬ -->
 <div id="tab-admin" class="page">
   <div class="card">
-    <span class="badge"><i class="fa-solid fa-sliders"></i> Параметры</span>
+    <span class="badge"><i class="fa-solid fa-sliders"></i> Параметры и ИИ-Судья</span>
     <h3>Управление чатом</h3>
-    <p class="sub">Настройки применяются мгновенно.</p>
+    <p class="sub">Измените валюту, статус ИИ или обновите полный текст правил.</p>
     
     <label style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 5px;">Название валюты:</label>
     <input type="text" class="input-field" id="adminCurrency" value="G-Coins">
@@ -280,20 +278,10 @@ p.sub { margin: 0 0 16px 0; font-size: 13px; color: var(--text-desc); line-heigh
       <option value="false">🛡 Выключен (ручной режим)</option>
     </select>
 
+    <label style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 5px;">Текст правил (для Grok AI и участников):</label>
+    <textarea class="input-field" id="adminRulesText" rows="8" placeholder="Вставьте правила по пунктам..."></textarea>
+
     <button class="btn" onclick="saveAdminSettings()"><i class="fa-solid fa-floppy-disk"></i> Сохранить параметры</button>
-  </div>
-
-  <div class="card">
-    <span class="badge"><i class="fa-solid fa-gavel"></i> ИИ-Судья</span>
-    <h3>Правила автомодерации</h3>
-    <p class="sub">Добавьте правила, за которые нейросеть будет выдавать мут.</p>
-    
-    <input type="text" class="input-field" id="newRuleCode" placeholder="Код (например: 1.1 или Спам)">
-    <input type="text" class="input-field" id="newRuleDesc" placeholder="Описание (например: Запрещены ссылки)">
-    <input type="number" class="input-field" id="newRuleMute" value="60" placeholder="Мут в минутах">
-    <button class="btn" onclick="addNewRule()"><i class="fa-solid fa-plus"></i> Добавить правило</button>
-
-    <div id="adminRulesList" style="margin-top: 16px;"></div>
   </div>
 </div>
 
@@ -412,7 +400,8 @@ async function initApp() {
       document.getElementById('aiStatusText').innerText = chat.ai_enabled ? "Активна (24/7)" : "Отключена";
       document.getElementById('aiStatusText').style.color = chat.ai_enabled ? "#16a34a" : "#ef4444";
 
-      renderRules(data.rules);
+      // Вывод текста правил в профиле участника
+      document.getElementById('playerRulesList').innerText = chat.rules_text || "В этом чате пока нет правил.";
 
       if (globalIsAdmin) {
         document.getElementById('userRoleBadge').innerText = "Администратор";
@@ -421,6 +410,7 @@ async function initApp() {
         
         document.getElementById('adminCurrency').value = chat.currency_name || "G-Coins";
         document.getElementById('adminAi').value = chat.ai_enabled ? "true" : "false";
+        document.getElementById('adminRulesText').value = chat.rules_text || "";
 
         switchTab('profile', document.querySelector('.nav-item'));
       } else {
@@ -431,30 +421,6 @@ async function initApp() {
   } catch (err) {
     console.error(err);
     document.getElementById('headerSubtitle').innerText = "Ошибка связи";
-  }
-}
-
-function renderRules(rules) {
-  const playerContainer = document.getElementById('playerRulesList');
-  const adminContainer = document.getElementById('adminRulesList');
-
-  if (rules && rules.length > 0) {
-    playerContainer.innerHTML = rules.map(r => 
-      `<div style="margin-bottom: 6px;">• <b>[${r.code}]</b> ${r.description} <span style="opacity:0.7;">(Мут: ${r.mute_minutes} мин.)</span></div>`
-    ).join('');
-
-    adminContainer.innerHTML = rules.map(r => `
-      <div class="rule-row">
-        <div>
-          <div style="font-weight: 800; font-size: 13px; color: var(--accent);">[${r.code}] • ${r.mute_minutes} мин.</div>
-          <div style="font-size: 12px; color: var(--text-desc);">${r.description}</div>
-        </div>
-        <button class="btn btn-danger" onclick="deleteRule(${r.id})"><i class="fa-solid fa-trash"></i></button>
-      </div>
-    `).join('');
-  } else {
-    playerContainer.innerHTML = "В этом чате пока нет правил.";
-    adminContainer.innerHTML = "<div style='font-size: 12px; color: var(--text-desc); text-align: center;'>Список правил пуст.</div>";
   }
 }
 
@@ -477,12 +443,18 @@ function switchTab(tabName, navEl) {
 async function quickSetupChat() {
   const currency_name = document.getElementById('quickCurrency').value || "G-Coins";
   const ai_enabled = document.getElementById('quickAi').value === 'true';
+  const rules_text = document.getElementById('quickRules').value.trim();
+
+  if (!rules_text) {
+    alert("Пожалуйста, введите текст правил!");
+    return;
+  }
 
   try {
     const response = await fetch(`${API_URL}/api/chat/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled, rules_text: "Базовые правила чата настроены." })
+      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled, rules_text })
     });
     if (!response.ok) throw new Error();
     location.reload();
@@ -494,57 +466,19 @@ async function quickSetupChat() {
 async function saveAdminSettings() {
   const currency_name = document.getElementById('adminCurrency').value || "G-Coins";
   const ai_enabled = document.getElementById('adminAi').value === 'true';
+  const rules_text = document.getElementById('adminRulesText').value.trim();
 
   try {
     const response = await fetch(`${API_URL}/api/chat/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
+      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled, rules_text })
     });
     if (!response.ok) throw new Error();
-    alert("✅ Параметры сохранены!");
+    alert("✅ Параметры и правила успешно сохранены!");
     initApp();
   } catch (err) {
     alert("❌ Ошибка сохранения.");
-  }
-}
-
-async function addNewRule() {
-  const code = document.getElementById('newRuleCode').value.trim();
-  const description = document.getElementById('newRuleDesc').value.trim();
-  const mute_minutes = parseInt(document.getElementById('newRuleMute').value) || 60;
-
-  if (!code || !description) {
-    alert("Заполните код и описание!");
-    return;
-  }
-
-  try {
-    const res = await fetch(`${API_URL}/api/rules/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), code, description, mute_minutes })
-    });
-    if (res.ok) {
-      document.getElementById('newRuleCode').value = "";
-      document.getElementById('newRuleDesc').value = "";
-      initApp();
-    }
-  } catch (err) {
-    alert("Ошибка добавления правила.");
-  }
-}
-
-async function deleteRule(ruleId) {
-  try {
-    const res = await fetch(`${API_URL}/api/rules/delete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rule_id: ruleId, chat_id: Number(chatId) })
-    });
-    if (res.ok) initApp();
-  } catch (err) {
-    alert("Ошибка удаления правила.");
   }
 }
 
