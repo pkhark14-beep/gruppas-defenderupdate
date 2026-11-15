@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatPermissions
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from fastapi import FastAPI, Request
@@ -44,9 +42,6 @@ def get_db():
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
-
-class SetupWizard(StatesGroup):
-    waiting_for_rules = State()
 
 def init_db():
     with get_db() as conn:
@@ -313,9 +308,9 @@ async def on_user_join_or_update(event: types.ChatMemberUpdated):
         role = status if status in ("administrator", "creator") else "member"
         upsert_member(event.chat.id, user, role=role)
 
+# --- ПРИВАТНЫЙ ЧАТ: ОТКРЫТИЕ MINI APP НАПРЯМУЮ ---
 @dp.message(Command("start"), F.chat.type == "private")
-async def cmd_start_private(message: types.Message, state: FSMContext):
-    await state.clear()
+async def cmd_start_private(message: types.Message):
     user_id = message.from_user.id
     
     with get_db() as conn:
@@ -336,112 +331,16 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
 
     kb_rows = []
     for c in chats:
-        is_adm = (c["owner_id"] == user_id) or (c["role"] in ("creator", "administrator"))
         title = c["title"] or f"Чат {c['chat_id']}"
-        
-        if is_adm and not c["is_configured"]:
-            kb_rows.append([
-                InlineKeyboardButton(text=f"⚙️ Настроить чат: {title}", callback_data=f"setup_chat:{c['chat_id']}")
-            ])
-        elif is_adm and c["is_configured"]:
-            app_url = f"{WEBAPP_URL}?chat_id={c['chat_id']}&v={int(time.time())}"
-            kb_rows.append([
-                InlineKeyboardButton(text=f"🛡 Открыть OS: {title}", web_app=WebAppInfo(url=app_url))
-            ])
-            kb_rows.append([
-                InlineKeyboardButton(text=f"📝 Изменить правила: {title}", callback_data=f"setup_chat:{c['chat_id']}")
-            ])
-        elif c["is_configured"]:
-            app_url = f"{WEBAPP_URL}?chat_id={c['chat_id']}&v={int(time.time())}"
-            kb_rows.append([
-                InlineKeyboardButton(text=f"👤 Профиль: {title}", web_app=WebAppInfo(url=app_url))
-            ])
+        app_url = f"{WEBAPP_URL}?chat_id={c['chat_id']}&v={int(time.time())}"
+        kb_rows.append([
+            InlineKeyboardButton(text=f"📱 Открыть OS: {title}", web_app=WebAppInfo(url=app_url))
+        ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await message.answer(
         f"🎛 <b>Gruppas OS — Центр управления</b>\n\n"
-        f"Привет, <b>{message.from_user.full_name}</b>! Выберите чат ниже:",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-@dp.callback_query(F.data.startswith("setup_chat:"))
-async def wizard_step_1_check_admin(callback: types.CallbackQuery, state: FSMContext):
-    chat_id = int(callback.data.split(":")[1])
-    user_id = callback.from_user.id
-    await callback.answer()
-    
-    try:
-        bot_info = await bot.get_me()
-        bot_member = await bot.get_chat_member(chat_id, bot_info.id)
-        if bot_member.status not in ("administrator", "creator"):
-            await callback.message.edit_text(
-                "⚠️ <b>У бота нет прав администратора в этом чате!</b>\n\n"
-                "Выдайте боту права администратора и снова нажмите /start в ЛС.",
-                parse_mode="HTML"
-            )
-            return
-            
-        await sync_chat_admins(chat_id)
-        with get_db() as conn:
-            conn.execute("UPDATE chats SET bot_is_admin = 1 WHERE chat_id = ?", (chat_id,))
-            conn.commit()
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка проверки прав чата: {e}")
-        return
-
-    await state.update_data(chat_id=chat_id)
-    await state.set_state(SetupWizard.waiting_for_rules)
-    
-    await callback.message.edit_text(
-        "✅ <b>Шаг 1/2: Права подтверждены!</b>\n\n"
-        "📜 <b>Шаг 2/2: Отправьте текст правил вашего чата одним сообщением.</b>\n"
-        "Укажите пункты и время мута (как в Ирисе), чтобы Grok знал, как наказывать нарушителей:\n\n"
-        "<i>Пример:\n"
-        "1.1 Оскорбления — мут 60 минут\n"
-        "1.2 Спам — мут 1440 минут</i>",
-        parse_mode="HTML"
-    )
-
-@dp.message(SetupWizard.waiting_for_rules, F.chat.type == "private")
-async def wizard_step_2_save_rules(message: types.Message, state: FSMContext):
-    if not message.text:
-        await message.answer("⚠️ Пожалуйста, отправьте правила текстом.")
-        return
-
-    rules_text = message.text.strip()
-    data = await state.get_data()
-    chat_id = data["chat_id"]
-    
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE chats 
-            SET rules_text = ?, ai_enabled = 1, is_configured = 1 
-            WHERE chat_id = ?
-        """, (rules_text, chat_id))
-        
-        cur.execute("DELETE FROM rules WHERE chat_id = ?", (chat_id,))
-        for idx, line in enumerate(rules_text.splitlines(), 1):
-            clean_line = line.strip()
-            if clean_line:
-                cur.execute(
-                    "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
-                    (chat_id, f"§{idx}", clean_line, 60)
-                )
-        conn.commit()
-        chat_row = cur.execute("SELECT title FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
-        chat_title = chat_row["title"] if chat_row else f"Чат {chat_id}"
-    
-    await state.clear()
-    app_url = f"{WEBAPP_URL}?chat_id={chat_id}&v={int(time.time())}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🚀 Открыть Gruppas OS: {chat_title}", web_app=WebAppInfo(url=app_url))]
-    ])
-    
-    await message.answer(
-        f"🎉 <b>Настройка чата «{chat_title}» завершена!</b>\n\n"
-        f"✅ Правила сохранены навсегда. ИИ-модератор Grok активирован.",
+        f"Привет, <b>{message.from_user.full_name}</b>! Ваши чаты:",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -461,7 +360,7 @@ async def cmd_group_profile(message: types.Message):
         [InlineKeyboardButton(text="📱 Открыть Gruppas OS", web_app=WebAppInfo(url=app_url))]
     ])
     await message.answer(
-        f"👤 <b>Профиль и правила чата</b>\nУчастник: {message.from_user.mention_html()}",
+        f"👤 <b>Профиль и настройка чата</b>\nУчастник: {message.from_user.mention_html()}",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -474,7 +373,6 @@ async def handle_group_messages(message: types.Message):
     chat_id = message.chat.id
     user = message.from_user
     
-    # Авто-регистрация чата и юзера при любом сообщении (чтобы база никогда не теряла чаты)
     with get_db() as conn:
         conn.execute("""
             INSERT OR IGNORE INTO chats (chat_id, title, owner_id)
