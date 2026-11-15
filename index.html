@@ -1,413 +1,310 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<title>Gruppas OS — Панель управления</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+import os
+import sqlite3
+import logging
+import asyncio
+import time
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command, CommandStart, CommandObject
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
 
-<style>
-*, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+logging.basicConfig(level=logging.INFO)
 
-:root {
-  --bg-gradient: radial-gradient(900px 500px at 20% 20%, rgba(200,130,255,.45), transparent 60%),
-                 radial-gradient(900px 500px at 80% 70%, rgba(120,200,255,.35), transparent 60%),
-                 linear-gradient(135deg,#e9dcff,#d9f1ff 45%,#eef7ff);
-  --text-main: #1a1a1a;
-  --text-desc: #555555;
-  --title-color: #1e1b4b;
-  --brand-color: #4a1c80;
-  --panel-bg: rgba(255, 255, 255, 0.65);
-  --panel-border: rgba(255, 255, 255, 0.8);
-  --card-bg: rgba(255, 255, 255, 0.8);
-  --card-border: rgba(255, 255, 255, 0.7);
-  --card-shadow: rgba(0, 0, 0, 0.06);
-  --input-bg: rgba(255, 255, 255, 0.9);
-}
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
+AI_API_KEY = os.getenv("AI_API_KEY", "ТВОЙ_API_КЛЮЧ_ИИ")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://pkhark14-beep.github.io/gruppas-defenderupdate/")
 
-body {
-  margin: 0;
-  padding: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-  color: var(--text-main);
-  min-height: 100vh;
-  background: var(--bg-gradient);
-  background-size: 200% 200%;
-  animation: bgMove 14s ease-in-out infinite;
-}
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+app = FastAPI()
 
-@keyframes bgMove {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-.setup-header { margin-bottom: 20px; }
-.progress-container { display: flex; gap: 6px; margin-bottom: 12px; }
-.progress-bar {
-  flex: 1; height: 4px;
-  background: rgba(124, 58, 237, 0.2);
-  border-radius: 4px; overflow: hidden; transition: 0.4s;
-}
-.progress-bar.active { background: linear-gradient(90deg, #a855f7, #7c3aed); }
+# --- БАЗА ДАННЫХ ---
+def init_db():
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chats (
+            chat_id INTEGER PRIMARY KEY,
+            title TEXT,
+            owner_id INTEGER,
+            currency_name TEXT DEFAULT 'G-Coins',
+            ai_enabled INTEGER DEFAULT 1,
+            is_configured INTEGER DEFAULT 0
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            code TEXT,
+            description TEXT,
+            mute_minutes INTEGER DEFAULT 60
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            chat_id INTEGER,
+            user_id INTEGER,
+            username TEXT,
+            balance INTEGER DEFAULT 100,
+            PRIMARY KEY (chat_id, user_id)
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-.top-bar {
-  display: flex; align-items: center; justify-content: space-between;
-  background: var(--panel-bg); backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px); border: 1px solid var(--panel-border);
-  padding: 10px 16px; border-radius: 18px; box-shadow: 0 8px 25px var(--card-shadow);
-}
+init_db()
 
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 900; color: var(--brand-color); font-size: 16px; }
-.logo {
-  width: 36px; height: 36px; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 18px; color: white;
-  background: linear-gradient(135deg, #c14cff, #7a4cff);
-  box-shadow: 0 0 14px rgba(193, 76, 255, .9);
-  animation: neonPulse 2s ease-in-out infinite alternate;
-}
+# --- МОДЕЛИ ДАННЫХ ---
+class ChatSetupModel(BaseModel):
+    chat_id: int
+    user_id: int
+    currency_name: str
+    ai_enabled: bool
 
-@keyframes neonPulse {
-  from { box-shadow: 0 0 8px rgba(193, 76, 255, 0.6); }
-  to { box-shadow: 0 0 22px rgba(193, 76, 255, 0.95); }
-}
+class RuleCreateModel(BaseModel):
+    chat_id: int
+    user_id: int
+    code: str
+    description: str
+    mute_minutes: int = 60
 
-.card {
-  background: var(--card-bg); backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px); border-radius: 24px;
-  padding: 22px; border: 1px solid var(--card-border);
-  box-shadow: 0 15px 35px var(--card-shadow); margin-bottom: 16px;
-  animation: fadeIn 0.4s ease;
-}
+class RuleDeleteModel(BaseModel):
+    rule_id: int
+    chat_id: int
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+# --- API ЭНДПОИНТЫ ---
+@app.get("/")
+@app.head("/")
+def read_root():
+    return {"status": "Gruppas OS Backend is online!", "database": "connected"}
 
-.badge {
-  font-size: 11px; font-weight: 800; padding: 5px 12px; border-radius: 8px;
-  text-transform: uppercase; display: inline-block;
-  background: rgba(168, 85, 247, 0.15); color: #7c3aed;
-  border: 1px solid rgba(168, 85, 247, 0.3); margin-bottom: 12px;
-}
-
-h3 { margin: 0 0 8px 0; font-size: 20px; color: var(--title-color); font-weight: 900; }
-p.sub { margin: 0 0 18px 0; font-size: 14px; color: var(--text-desc); line-height: 1.5; }
-
-.input-field {
-  width: 100%; padding: 14px; border-radius: 14px;
-  border: 1px solid var(--panel-border); background: var(--input-bg);
-  color: var(--text-main); font-size: 15px; font-weight: 600;
-  margin-bottom: 14px; outline: none; transition: 0.2s;
-}
-.input-field:focus { border-color: #a855f7; box-shadow: 0 0 10px rgba(168, 85, 247, 0.2); }
-
-.btn {
-  width: 100%; padding: 15px; border-radius: 14px; font-weight: 800; font-size: 15px;
-  color: white; background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-  border: none; cursor: pointer; display: inline-flex; align-items: center;
-  justify-content: center; gap: 8px; box-shadow: 0 8px 20px rgba(109, 40, 217, 0.3);
-}
-
-.spinner-ring {
-  width: 56px; height: 56px; border: 5px solid rgba(124, 58, 237, 0.15);
-  border-top: 5px solid #7c3aed; border-radius: 50%;
-  animation: spin 1s linear infinite; margin: 0 auto 16px auto;
-}
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-.page { display: none; }
-.page.active { display: block; }
-
-.stat-box {
-  background: rgba(255, 255, 255, 0.6);
-  padding: 14px; border-radius: 14px; margin-bottom: 12px;
-  border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;
-}
-</style>
-</head>
-<body>
-
-<div class="setup-header">
-  <div class="progress-container" id="progressBarContainer">
-    <div class="progress-bar active" id="p1"></div>
-    <div class="progress-bar" id="p2"></div>
-    <div class="progress-bar" id="p3"></div>
-  </div>
-
-  <div class="top-bar">
-    <div class="brand">
-      <div class="logo">G</div>
-      <div>
-        <div>Gruppas OS</div>
-        <div style="font-size: 11px; font-weight: 600; opacity: 0.75;" id="headerSubtitle">Загрузка...</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ШАГ 0: ВЕРИФИКАЦИЯ ПРАВ (ПЕРВИЧНАЯ НАСТРОЙКА) -->
-<div id="page-verify" class="page">
-  <div class="card" style="text-align: center; padding: 30px 20px;">
-    <div class="spinner-ring"></div>
-    <span class="badge"><i class="fa-solid fa-shield-halved"></i> Верификация</span>
-    <h3>Ожидание прав администратора</h3>
-    <p class="sub">Выдайте боту права администратора в групповом чате. Как только права будут выданы, экран перейдет к настройке.</p>
-    <div style="font-size: 12px; color: #7c3aed; font-weight: 700;" id="verifyStatusText">Проверяем статус в Telegram...</div>
-  </div>
-</div>
-
-<!-- ШАГ 1: ВЫБОР ВАЛЮТЫ (МАСТЕР ПЕРВИЧНОЙ НАСТРОЙКИ) -->
-<div id="page-step1" class="page">
-  <div class="card">
-    <span class="badge"><i class="fa-solid fa-coins"></i> Шаг 1 из 2</span>
-    <h3>Экономика и Валюта</h3>
-    <p class="sub">Название внутренней валюты чата:</p>
-    <input type="text" class="input-field" id="setupCurrency" value="G-Coins">
-    <button class="btn" onclick="nextStep(2)">Продолжить <i class="fa-solid fa-arrow-right"></i></button>
-  </div>
-</div>
-
-<!-- ШАГ 2: ИИ-МОДЕРАТОР (МАСТЕР ПЕРВИЧНОЙ НАСТРОЙКИ) -->
-<div id="page-step2" class="page">
-  <div class="card">
-    <span class="badge"><i class="fa-solid fa-brain"></i> Шаг 2 из 2</span>
-    <h3>ИИ-Судья и Автомодерация</h3>
-    <p class="sub">Включить автомодерацию правил через ИИ?</p>
-    <select class="input-field" id="setupAi">
-      <option value="true">🤖 Включить ИИ-модератора (авто-муты 24/7)</option>
-      <option value="false">🛡 Только ручной контроль админов</option>
-    </select>
-    <button class="btn" onclick="finishSetup()">Сохранить и активировать <i class="fa-solid fa-rocket"></i></button>
-  </div>
-</div>
-
-<!-- АДМИН-ПАНЕЛЬ (ЕСЛИ ЧАТ УЖЕ НАСТРОЕН) -->
-<div id="page-admin-panel" class="page">
-  <div class="card">
-    <span class="badge"><i class="fa-solid fa-sliders"></i> Админ-панель чата</span>
-    <h3>Управление экосистемой</h3>
-    <p class="sub">Изменяйте параметры чата в реальном времени.</p>
-    
-    <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">Название валюты:</label>
-    <input type="text" class="input-field" id="adminCurrency" value="G-Coins">
-
-    <label style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 6px;">ИИ-модератор:</label>
-    <select class="input-field" id="adminAi">
-      <option value="true">🤖 Включен (авто-муты 24/7)</option>
-      <option value="false">🛡 Отключен (только ручной контроль)</option>
-    </select>
-
-    <button class="btn" onclick="saveAdminSettings()"><i class="fa-solid fa-floppy-disk"></i> Сохранить изменения</button>
-  </div>
-</div>
-
-<!-- ПАНЕЛЬ ИГРОКА (ДЛЯ ОБЫЧНЫХ УЧАСТНИКОВ) -->
-<div id="page-player-panel" class="page">
-  <div class="card">
-    <span class="badge"><i class="fa-solid fa-user"></i> Профиль участника</span>
-    <h3 id="playerWelcome">Личный кабинет</h3>
-    <p class="sub">Ваша статистика и информация о чате.</p>
-    
-    <div class="stat-box">
-      <span>💰 Ваш баланс:</span>
-      <strong id="playerBalance" style="color: #7c3aed; font-size: 16px;">100 G-Coins</strong>
-    </div>
-
-    <div class="stat-box">
-      <span>🛡 Статус защиты ИИ:</span>
-      <strong id="aiStatusText" style="color: #16a34a;">Активен</strong>
-    </div>
-
-    <h4 style="margin: 16px 0 8px 0; color: var(--title-color);"><i class="fa-solid fa-book"></i> Правила чата</h4>
-    <div id="playerRulesList" style="font-size: 13px; color: var(--text-desc); line-height: 1.6;">
-      Загрузка правил...
-    </div>
-
-    <button class="btn" style="margin-top: 16px;" onclick="closeWebApp()"><i class="fa-solid fa-check"></i> Закрыть</button>
-  </div>
-</div>
-
-<!-- ШАГ УСПЕХА -->
-<div id="page-success" class="page">
-  <div class="card" style="text-align: center;">
-    <div style="font-size: 50px; color: #16a34a; margin-bottom: 12px;"><i class="fa-solid fa-circle-check"></i></div>
-    <h3>Всё готово!</h3>
-    <p class="sub">Чат успешно привязан к Gruppas OS.</p>
-    <button class="btn" onclick="closeWebApp()"><i class="fa-solid fa-check"></i> Закрыть панель</button>
-  </div>
-</div>
-
-<script>
-const API_URL = "https://gruppas-defenderupdate.onrender.com"; 
-
-const tg = window.Telegram?.WebApp;
-tg?.expand();
-
-const urlParams = new URLSearchParams(window.location.search);
-const chatId = urlParams.get('chat_id') || "-100123456789";
-const userId = tg?.initDataUnsafe?.user?.id || 12345;
-
-let verifyInterval = null;
-
-async function initApp() {
-  try {
-    const res = await fetch(`${API_URL}/api/chat/${chatId}?user_id=${userId}`);
-    const data = await res.json();
-    
-    const chat = data.chat;
-    const isConfigured = chat && chat.is_configured === 1;
-    const isAdmin = data.is_admin;
-
-    if (!isConfigured) {
-      if (isAdmin) {
-        document.getElementById('progressBarContainer').style.display = 'flex';
-        document.getElementById('page-verify').classList.add('active');
-        document.getElementById('headerSubtitle').innerText = "Верификация прав";
-        verifyInterval = setInterval(checkAdminRights, 2500);
-      } else {
-        document.getElementById('progressBarContainer').style.display = 'none';
-        document.getElementById('headerSubtitle').innerText = "Ожидание настройки";
-        document.body.innerHTML = `
-          <div class="card" style="text-align: center; margin-top: 40px;">
-            <div style="font-size: 40px; color: #eab308; margin-bottom: 10px;"><i class="fa-solid fa-triangle-exclamation"></i></div>
-            <h3>Чат еще не настроен</h3>
-            <p class="sub">Администратор еще не инициализировал Gruppas OS в этом чате.</p>
-            <button class="btn" onclick="closeWebApp()">Закрыть</button>
-          </div>
-        `;
-      }
-    } else {
-      document.getElementById('progressBarContainer').style.display = 'none';
-      
-      if (isAdmin) {
-        // Открываем полноценную Админ-панель (одну страницу с настройками)
-        document.getElementById('page-admin-panel').classList.add('active');
-        document.getElementById('headerSubtitle').innerText = "Админ-панель";
-        document.getElementById('adminCurrency').value = chat.currency_name || "G-Coins";
-        document.getElementById('adminAi').value = chat.ai_enabled ? "true" : "false";
-      } else {
-        // Панель игрока
-        document.getElementById('page-player-panel').classList.add('active');
-        document.getElementById('headerSubtitle').innerText = "Личный кабинет";
-        document.getElementById('playerWelcome').innerText = `Привет, ${tg?.initDataUnsafe?.user?.first_name || 'Участник'}!`;
-        document.getElementById('playerBalance').innerText = `${data.player?.balance || 100} ${chat.currency_name || 'G-Coins'}`;
-        document.getElementById('aiStatusText').innerText = chat.ai_enabled ? "Активен (24/7)" : "Отключен";
-        
-        const rulesList = data.rules;
-        const rulesContainer = document.getElementById('playerRulesList');
-        if (rulesList && rulesList.length > 0) {
-          rulesContainer.innerHTML = rulesList.map(r => `• <b>${r.code}</b>: ${r.description} (Мут: ${r.mute_minutes} мин.)`).join('<br>');
-        } else {
-          rulesContainer.innerHTML = "В этом чате пока не добавлены кастомные правила ИИ.";
+@app.get("/api/chat/verify-admin/{chat_id}")
+async def verify_chat_admin(chat_id: int, user_id: int):
+    try:
+        bot_info = await bot.get_me()
+        member = await bot.get_chat_member(chat_id, bot_info.id)
+        is_bot_admin = member.status in ["creator", "administrator"]
+        return {
+            "is_admin": is_bot_admin,
+            "status": "ready" if is_bot_admin else "waiting"
         }
-      }
-    }
-  } catch (err) {
-    console.error(err);
-    document.getElementById('headerSubtitle').innerText = "Ошибка связи";
-  }
-}
+    except Exception as e:
+        return {"is_admin": False, "status": "waiting", "error": str(e)}
 
-async function checkAdminRights() {
-  try {
-    const res = await fetch(`${API_URL}/api/chat/verify-admin/${chatId}?user_id=${userId}`);
-    const data = await res.json();
-
-    if (data.is_admin) {
-      clearInterval(verifyInterval); 
-      document.getElementById('page-verify').classList.remove('active');
-      document.getElementById('page-step1').classList.add('active');
-      document.getElementById('headerSubtitle').innerText = "Настройка валюты";
-      setProgress(1);
-    } else {
-      document.getElementById('verifyStatusText').innerText = "Ожидание выдачи прав боту в группе...";
-    }
-  } catch (err) {
-    console.log("Ожидание сервера...");
-  }
-}
-
-function setProgress(step) {
-  document.querySelectorAll('.progress-bar').forEach((bar, idx) => {
-    if (idx < step) bar.classList.add('active');
-    else bar.classList.remove('active');
-  });
-}
-
-function nextStep(step) {
-  if (step === 2) {
-    document.getElementById('page-step1').classList.remove('active');
-    document.getElementById('page-step2').classList.add('active');
-    setProgress(2);
-    document.getElementById('headerSubtitle').innerText = "Настройка ИИ";
-  }
-}
-
-async function finishSetup() {
-  const currency_name = document.getElementById('setupCurrency').value || "G-Coins";
-  const ai_enabled = document.getElementById('setupAi').value === 'true';
-
-  document.getElementById('page-step2').classList.remove('active');
-  document.body.insertAdjacentHTML('beforeend', `
-    <div id="loading-overlay" class="card" style="text-align: center; padding: 30px;">
-      <div class="spinner-ring" style="margin: 0 auto 15px auto;"></div>
-      <h3>Сохранение параметров...</h3>
-      <p class="sub">Записываем конфигурацию в базу данных.</p>
-    </div>
-  `);
-
-  try {
-    const response = await fetch(`${API_URL}/api/chat/setup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
-    });
-
-    if (!response.ok) throw new Error("Ошибка сервера");
-
-    document.getElementById('loading-overlay').remove();
-    document.getElementById('page-success').classList.add('active');
-    document.getElementById('headerSubtitle').innerText = "Готово к работе";
-
-  } catch (err) {
-    alert("Не удалось сохранить параметры.");
-    location.reload();
-  }
-}
-
-async function saveAdminSettings() {
-  const currency_name = document.getElementById('adminCurrency').value || "G-Coins";
-  const ai_enabled = document.getElementById('adminAi').value === 'true';
-
-  try {
-    const response = await fetch(`${API_URL}/api/chat/setup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(chatId), user_id: Number(userId), currency_name, ai_enabled })
-    });
-
-    if (!response.ok) throw new Error("Ошибка сервера");
+@app.get("/api/chat/{chat_id}")
+async def get_chat_config(chat_id: int, user_id: int):
+    conn = sqlite3.connect("gruppas.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
     
-    alert("✅ Настройки успешно сохранены!");
-    closeWebApp();
-  } catch (err) {
-    alert("❌ Не удалось сохранить настройки.");
-  }
-}
+    chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
+    if not chat:
+        cur.execute("""
+            INSERT OR IGNORE INTO chats (chat_id, title, owner_id, currency_name, ai_enabled, is_configured)
+            VALUES (?, ?, ?, 'G-Coins', 1, 0)
+        """, (chat_id, f"Чат #{chat_id}", user_id))
+        conn.commit()
+        chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
+    
+    is_admin = False
+    if chat and chat['owner_id'] == user_id:
+        is_admin = True
+    else:
+        try:
+            member = await bot.get_chat_member(chat_id, user_id)
+            if member.status in ["creator", "administrator"]:
+                is_admin = True
+        except Exception:
+            if chat and chat['owner_id'] == user_id:
+                is_admin = True
 
-function closeWebApp() {
-  if (window.Telegram?.WebApp) {
-    window.Telegram.WebApp.close();
-  } else {
-    window.close();
-  }
-}
+    player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
+    if not player:
+        cur.execute("INSERT OR IGNORE INTO players (chat_id, user_id, balance) VALUES (?, ?, 100)", (chat_id, user_id))
+        conn.commit()
+        player = cur.execute("SELECT * FROM players WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
 
-initApp();
-</script>
-</body>
-</html>
+    rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
+    conn.close()
+    
+    return {
+        "chat": dict(chat) if chat else {},
+        "is_admin": is_admin,
+        "player": dict(player) if player else {},
+        "rules": [dict(r) for r in rules]
+    }
+
+@app.post("/api/chat/setup")
+async def save_chat_setup(data: ChatSetupModel):
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    
+    chat = cur.execute("SELECT owner_id, title, is_configured FROM chats WHERE chat_id = ?", (data.chat_id,)).fetchone()
+    was_configured = chat[2] if chat else 0
+    
+    if not chat:
+        cur.execute("""
+            INSERT INTO chats (chat_id, title, owner_id, currency_name, ai_enabled, is_configured)
+            VALUES (?, ?, ?, ?, ?, 1)
+        """, (data.chat_id, f"Чат #{data.chat_id}", data.user_id, data.currency_name, int(data.ai_enabled)))
+        chat_title = f"Чат #{data.chat_id}"
+    else:
+        chat_title = chat[1] or f"Чат #{data.chat_id}"
+        cur.execute("""
+            UPDATE chats 
+            SET currency_name = ?, ai_enabled = ?, is_configured = 1
+            WHERE chat_id = ?
+        """, (data.currency_name, int(data.ai_enabled), data.chat_id))
+        
+    conn.commit()
+    conn.close()
+
+    # Отправляем приветствие в группу только при первичной активации
+    if not was_configured:
+        try:
+            ai_status = "🤖 Включен" if data.ai_enabled else "🛡 Выключен"
+            await bot.send_message(
+                data.chat_id,
+                f"🎉 <b>Gruppas OS успешно настроена для чата «{chat_title}»!</b>\n\n"
+                f"💰 Валюта: <b>{data.currency_name}</b>\n"
+                f"⚖️ ИИ-модератор: {ai_status}\n\n"
+                f"<i>Игроки могут открыть свой профиль командой /profile, а админы — через /start в ЛС.</i>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка отправки в чат: {e}")
+
+    return {"status": "ok"}
+
+@app.post("/api/rules/add")
+def add_chat_rule(data: RuleCreateModel):
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
+        (data.chat_id, data.code, data.description, data.mute_minutes)
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "rule_added"}
+
+@app.post("/api/rules/delete")
+def delete_chat_rule(data: RuleDeleteModel):
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute("DELETE FROM rules WHERE id = ? AND chat_id = ?", (data.rule_id, data.chat_id))
+    conn.commit()
+    conn.close()
+    return {"status": "rule_deleted"}
+
+# --- КОМАНДЫ TELEGRAM БОТА ---
+@dp.message(Command("setup"), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_group_setup(message: types.Message):
+    conn = sqlite3.connect("gruppas.db")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO chats (chat_id, title, owner_id) 
+        VALUES (?, ?, ?)
+    """, (message.chat.id, message.chat.title, message.from_user.id))
+    conn.commit()
+    conn.close()
+
+    bot_info = await bot.get_me()
+    setup_link = f"https://t.me/{bot_info.username}?start=setup_{message.chat.id}"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚙️ Верифицировать и настроить чат", url=setup_link)]
+    ])
+    await message.answer(
+        f"🛠 <b>Инициализация Gruppas OS для «{message.chat.title}»</b>\n\n"
+        f"Администратор: {message.from_user.mention_html()}\n"
+        f"Нажмите кнопку ниже для проверки прав и запуска мастера:",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+@dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_group_profile(message: types.Message):
+    app_url = f"{WEBAPP_URL}?chat_id={message.chat.id}&v={int(time.time())}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 Открыть приложение Gruppas OS", web_app=WebAppInfo(url=app_url))]
+    ])
+    await message.answer(
+        f"👤 <b>Экосистема Gruppas OS</b>\n\n"
+        f"Участник: {message.from_user.mention_html()}\n"
+        f"Нажмите кнопку ниже, чтобы открыть приложение:",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+@dp.message(Command("start"), F.chat.type == "private")
+async def cmd_start_private(message: types.Message):
+    conn = sqlite3.connect("gruppas.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    
+    chats = cur.execute("SELECT * FROM chats WHERE owner_id = ?", (message.from_user.id,)).fetchall()
+    conn.close()
+    
+    if chats:
+        kb_buttons = []
+        for chat in chats:
+            panel_url = f"{WEBAPP_URL}?chat_id={chat['chat_id']}&v={int(time.time())}"
+            chat_title = chat["title"] or f"Чат #{chat['chat_id']}"
+            kb_buttons.append([
+                InlineKeyboardButton(text=f"📱 Открыть панель: {chat_title}", web_app=WebAppInfo(url=panel_url))
+            ])
+            
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+        await message.answer(
+            f"🎛 <b>Gruppas OS — Центр управления</b>\n\n"
+            f"Привет, <b>{message.from_user.full_name}</b>! Ваши чаты привязаны. "
+            f"Выберите чат для входа в приложение:",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    else:
+        await message.answer(
+            "👋 Добро пожаловать в <b>Gruppas OS</b>!\n\n"
+            "Добавьте меня в групповой чат, выдайте права администратора и отправьте команду <b>/setup</b>.",
+            parse_mode="HTML"
+        )
+
+@dp.message(CommandStart(deep_link=True))
+async def cmd_start_deeplink(message: types.Message, command: CommandObject):
+    args = command.args
+    if args and args.startswith("setup_"):
+        chat_id = args.replace("setup_", "")
+        app_url = f"{WEBAPP_URL}?chat_id={chat_id}&v={int(time.time())}"
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Запустить мастер настройки", web_app=WebAppInfo(url=app_url))]
+        ])
+        await message.answer(
+            "Панель верификации и конфигурации чата готова. Нажмите кнопку ниже:",
+            reply_markup=kb
+        )
+    else:
+        await cmd_start_private(message)
+
+async def start_telegram_bot():
+    await dp.start_polling(bot)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(start_telegram_bot())
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
