@@ -7,7 +7,7 @@ import aiohttp
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandStart, CommandObject
+from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatPermissions
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -38,65 +38,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- СОСТОЯНИЯ МАСТЕРА НАСТРОЙКИ В ЛС ---
+# --- ЕДИНОЕ ПОДКЛЮЧЕНИЕ К БАЗЕ БЕЗ БЛОКИРОВОК ---
+def get_db():
+    conn = sqlite3.connect("gruppas.db", timeout=30.0, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    return conn
+
 class SetupWizard(StatesGroup):
     waiting_for_rules = State()
-    waiting_for_currency = State()
 
-# --- БАЗА ДАННЫХ (РАЗДЕЛЕННАЯ ПО ЧАТАМ, ПРАВАМ И УЧАСТНИКАМ) ---
+# --- ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ ---
 def init_db():
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    
-    # Таблица групп (чатов)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS chats (
-            chat_id INTEGER PRIMARY KEY,
-            title TEXT,
-            owner_id INTEGER,
-            currency_name TEXT DEFAULT 'G-Coins',
-            rules_text TEXT DEFAULT '',
-            ai_enabled INTEGER DEFAULT 1,
-            is_configured INTEGER DEFAULT 0,
-            bot_is_admin INTEGER DEFAULT 0
-        )
-    """)
-    
-    # Таблица участников с привязкой к конкретному chat_id и правами
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS chat_members (
-            chat_id INTEGER,
-            user_id INTEGER,
-            username TEXT,
-            full_name TEXT,
-            role TEXT DEFAULT 'member', -- creator, administrator, member
-            is_prem INTEGER DEFAULT 0,   -- Gruppas Prem статус
-            balance INTEGER DEFAULT 100,
-            warns INTEGER DEFAULT 0,
-            PRIMARY KEY (chat_id, user_id)
-        )
-    """)
-    
-    # Отдельные структурированные правила (для быстрого отображения и совместимости с Mini App)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS rules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            code TEXT,
-            description TEXT,
-            mute_minutes INTEGER DEFAULT 60
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id INTEGER PRIMARY KEY,
+                title TEXT,
+                owner_id INTEGER,
+                currency_name TEXT DEFAULT 'G-Coins',
+                rules_text TEXT DEFAULT '',
+                ai_enabled INTEGER DEFAULT 1,
+                is_configured INTEGER DEFAULT 0,
+                bot_is_admin INTEGER DEFAULT 0
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chat_members (
+                chat_id INTEGER,
+                user_id INTEGER,
+                username TEXT,
+                full_name TEXT,
+                role TEXT DEFAULT 'member',
+                is_prem INTEGER DEFAULT 0,
+                balance INTEGER DEFAULT 100,
+                warns INTEGER DEFAULT 0,
+                PRIMARY KEY (chat_id, user_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                code TEXT,
+                description TEXT,
+                mute_minutes INTEGER DEFAULT 60
+            )
+        """)
+        conn.commit()
 
 init_db()
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БАЗЫ ---
-def upsert_member(chat_id: int, user: types.User, role: str = None):
+def upsert_member_with_conn(conn: sqlite3.Connection, chat_id: int, user: types.User, role: str = None):
     if not user or user.is_bot:
         return
-    conn = sqlite3.connect("gruppas.db")
     cur = conn.cursor()
     existing = cur.execute(
         "SELECT role FROM chat_members WHERE chat_id = ? AND user_id = ?",
@@ -104,7 +102,7 @@ def upsert_member(chat_id: int, user: types.User, role: str = None):
     ).fetchone()
     
     if existing:
-        new_role = role if role else existing[0]
+        new_role = role if role else existing["role"]
         cur.execute("""
             UPDATE chat_members 
             SET username = ?, full_name = ?, role = ?
@@ -115,14 +113,18 @@ def upsert_member(chat_id: int, user: types.User, role: str = None):
             INSERT INTO chat_members (chat_id, user_id, username, full_name, role, balance)
             VALUES (?, ?, ?, ?, ?, 100)
         """, (chat_id, user.id, user.username or "", user.full_name, role or "member"))
-    conn.commit()
-    conn.close()
+
+def upsert_member(chat_id: int, user: types.User, role: str = None):
+    if not user or user.is_bot:
+        return
+    with get_db() as conn:
+        upsert_member_with_conn(conn, chat_id, user, role)
+        conn.commit()
 
 async def sync_chat_admins(chat_id: int):
-    """Сканирует и записывает всех админов и владельца группы в БД"""
-    try:
-        admins = await bot.get_chat_administrators(chat_id)
-        conn = sqlite3.connect("gruppas.db")
+    """Сканирует и записывает всех админов и владельца группы одним соединением"""
+    admins = await bot.get_chat_administrators(chat_id)
+    with get_db() as conn:
         cur = conn.cursor()
         for adm in admins:
             if adm.user.is_bot:
@@ -130,15 +132,12 @@ async def sync_chat_admins(chat_id: int):
             role = "creator" if adm.status == "creator" else "administrator"
             if role == "creator":
                 cur.execute("UPDATE chats SET owner_id = ? WHERE chat_id = ?", (adm.user.id, chat_id))
-            upsert_member(chat_id, adm.user, role=role)
+            upsert_member_with_conn(conn, chat_id, adm.user, role=role)
         conn.commit()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Ошибка синхронизации админов чата {chat_id}: {e}")
 
 # --- НЕЙРОСЕТЬ GROK ДЛЯ УМНОЙ МОДЕРАЦИИ ПО ПРАВИЛАМ ---
 async def check_message_with_grok(rules_text: str, user_name: str, is_prem: bool, message_text: str) -> dict:
-    if not AI_API_KEY or AI_API_KEY == "ТВОЙ_API_КЛЮЧ_ИИ":
+    if not AI_API_KEY or AI_API_KEY == "ТВОЙ_API_КЛЮЧ_GROK":
         return {"violated": False}
 
     system_prompt = (
@@ -227,101 +226,87 @@ async def telegram_webhook(request: Request):
 
 @app.get("/api/chat/{chat_id}")
 async def get_chat_config(chat_id: int, user_id: int):
-    conn = sqlite3.connect("gruppas.db")
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    
-    chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
-    member = cur.execute("SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
-    
-    is_admin = False
-    if chat and chat["owner_id"] == user_id:
-        is_admin = True
-    elif member and member["role"] in ("creator", "administrator"):
-        is_admin = True
+    with get_db() as conn:
+        cur = conn.cursor()
+        chat = cur.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
+        member = cur.execute("SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
+        
+        is_admin = False
+        if chat and chat["owner_id"] == user_id:
+            is_admin = True
+        elif member and member["role"] in ("creator", "administrator"):
+            is_admin = True
 
-    members_list = cur.execute("SELECT * FROM chat_members WHERE chat_id = ?", (chat_id,)).fetchall()
-    rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
-    conn.close()
-    
-    return {
-        "chat": dict(chat) if chat else {},
-        "is_admin": is_admin,
-        "player": dict(member) if member else {"balance": 100, "role": "member", "is_prem": 0},
-        "members": [dict(m) for m in members_list],
-        "rules": [dict(r) for r in rules]
-    }
+        members_list = cur.execute("SELECT * FROM chat_members WHERE chat_id = ?", (chat_id,)).fetchall()
+        rules = cur.execute("SELECT * FROM rules WHERE chat_id = ?", (chat_id,)).fetchall()
+        
+        return {
+            "chat": dict(chat) if chat else {},
+            "is_admin": is_admin,
+            "player": dict(member) if member else {"balance": 100, "role": "member", "is_prem": 0},
+            "members": [dict(m) for m in members_list],
+            "rules": [dict(r) for r in rules]
+        }
 
 @app.post("/api/chat/setup")
 async def save_chat_setup(data: ChatSetupModel):
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE chats 
-        SET currency_name = ?, ai_enabled = ?, rules_text = ?, is_configured = 1
-        WHERE chat_id = ?
-    """, (data.currency_name, int(data.ai_enabled), data.rules_text, data.chat_id))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE chats 
+            SET currency_name = ?, ai_enabled = ?, rules_text = ?, is_configured = 1
+            WHERE chat_id = ?
+        """, (data.currency_name, int(data.ai_enabled), data.rules_text, data.chat_id))
+        conn.commit()
     return {"status": "ok"}
 
 @app.post("/api/rules/add")
 def add_chat_rule(data: RuleCreateModel):
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
-        (data.chat_id, data.code, data.description, data.mute_minutes)
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
+            (data.chat_id, data.code, data.description, data.mute_minutes)
+        )
+        conn.commit()
     return {"status": "rule_added"}
 
 @app.post("/api/rules/delete")
 def delete_chat_rule(data: RuleDeleteModel):
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    cur.execute("DELETE FROM rules WHERE id = ? AND chat_id = ?", (data.rule_id, data.chat_id))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("DELETE FROM rules WHERE id = ? AND chat_id = ?", (data.rule_id, data.chat_id))
+        conn.commit()
     return {"status": "rule_deleted"}
 
 @app.post("/api/members/prem")
 def set_member_prem(data: PremToggleModel):
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE chat_members SET is_prem = ? WHERE chat_id = ? AND user_id = ?",
-        (int(data.is_prem), data.chat_id, data.target_user_id)
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE chat_members SET is_prem = ? WHERE chat_id = ? AND user_id = ?",
+            (int(data.is_prem), data.chat_id, data.target_user_id)
+        )
+        conn.commit()
     return {"status": "updated"}
 
 # --- СОБЫТИЯ ДОБАВЛЕНИЯ БОТА И УЧАСТНИКОВ В ЧАТЫ ---
 @dp.my_chat_member()
 async def on_bot_status_change(event: types.ChatMemberUpdated):
-    """Срабатывает, когда бота добавляют в группу или меняют его права"""
     if event.chat.type not in ("group", "supergroup"):
         return
     
     new_status = event.new_chat_member.status
     is_admin = 1 if new_status in ("administrator", "creator") else 0
     
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    if new_status in ("left", "kicked"):
-        cur.execute("DELETE FROM chats WHERE chat_id = ?", (event.chat.id,))
-    else:
-        cur.execute("""
-            INSERT INTO chats (chat_id, title, owner_id, bot_is_admin)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(chat_id) DO UPDATE SET
-                title = excluded.title,
-                bot_is_admin = excluded.bot_is_admin
-        """, (event.chat.id, event.chat.title, event.from_user.id, is_admin))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        if new_status in ("left", "kicked"):
+            conn.execute("DELETE FROM chats WHERE chat_id = ?", (event.chat.id,))
+        else:
+            conn.execute("""
+                INSERT INTO chats (chat_id, title, owner_id, bot_is_admin)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    title = excluded.title,
+                    bot_is_admin = excluded.bot_is_admin
+            """, (event.chat.id, event.chat.title, event.from_user.id, is_admin))
+        conn.commit()
 
     if is_admin:
         await sync_chat_admins(event.chat.id)
@@ -330,7 +315,7 @@ async def on_bot_status_change(event: types.ChatMemberUpdated):
             await bot.send_message(
                 event.chat.id,
                 f"🛡 <b>Gruppas OS подключена к «{event.chat.title}»!</b>\n\n"
-                f"Права администратора получены. Владелец или админ может запустить настройку в ЛС с ботом (@{bot_info.username}) через команду /start.",
+                f"Права администратора получены. Владелец или админ может запустить настройку в ЛС с ботом (@{bot_info.username}) через /start.",
                 parse_mode="HTML"
             )
         except Exception:
@@ -338,7 +323,6 @@ async def on_bot_status_change(event: types.ChatMemberUpdated):
 
 @dp.chat_member()
 async def on_user_join_or_update(event: types.ChatMemberUpdated):
-    """Автоматически записывает в БД каждого нового вступившего участника и его роль"""
     if event.chat.type not in ("group", "supergroup"):
         return
     user = event.new_chat_member.user
@@ -353,17 +337,12 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
     
-    conn = sqlite3.connect("gruppas.db")
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    
-    # Ищем чаты, где пользователь владелец/админ ИЛИ обычный участник
-    chats = cur.execute("""
-        SELECT DISTINCT c.*, cm.role FROM chats c
-        LEFT JOIN chat_members cm ON c.chat_id = cm.chat_id AND cm.user_id = ?
-        WHERE c.owner_id = ? OR cm.user_id = ?
-    """, (user_id, user_id, user_id)).fetchall()
-    conn.close()
+    with get_db() as conn:
+        chats = conn.execute("""
+            SELECT DISTINCT c.*, cm.role FROM chats c
+            LEFT JOIN chat_members cm ON c.chat_id = cm.chat_id AND cm.user_id = ?
+            WHERE c.owner_id = ? OR cm.user_id = ?
+        """, (user_id, user_id, user_id)).fetchall()
 
     if not chats:
         await message.answer(
@@ -381,12 +360,10 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
         title = c["title"] or f"Чат {c['chat_id']}"
         
         if is_adm and not c["is_configured"]:
-            # Чат еще не настроен -> кнопка запуска мастера
             kb_rows.append([
                 InlineKeyboardButton(text=f"⚙️ Настроить чат: {title}", callback_data=f"setup_chat:{c['chat_id']}")
             ])
         elif is_adm and c["is_configured"]:
-            # Чат настроен -> вход в приложение + кнопка перенастройки правил
             app_url = f"{WEBAPP_URL}?chat_id={c['chat_id']}&v={int(time.time())}"
             kb_rows.append([
                 InlineKeyboardButton(text=f"🛡 Открыть OS: {title}", web_app=WebAppInfo(url=app_url))
@@ -395,7 +372,6 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
                 InlineKeyboardButton(text=f"📝 Изменить правила: {title}", callback_data=f"setup_chat:{c['chat_id']}")
             ])
         elif c["is_configured"]:
-            # Обычный участник -> вход в профиль
             app_url = f"{WEBAPP_URL}?chat_id={c['chat_id']}&v={int(time.time())}"
             kb_rows.append([
                 InlineKeyboardButton(text=f"👤 Профиль: {title}", web_app=WebAppInfo(url=app_url))
@@ -409,38 +385,34 @@ async def cmd_start_private(message: types.Message, state: FSMContext):
         reply_markup=kb
     )
 
-# --- ПОШАГОВЫЙ МАСТЕР НАСТРОЙКИ ЧАТА (ПРОВЕРКА АДМИНКИ -> ПРАВИЛА -> ВАЛЮТА) ---
+# --- ПОШАГОВЫЙ МАСТЕР НАСТРОЙКИ ЧАТА ---
 @dp.callback_query(F.data.startswith("setup_chat:"))
 async def wizard_step_1_check_admin(callback: types.CallbackQuery, state: FSMContext):
     chat_id = int(callback.data.split(":")[1])
     user_id = callback.from_user.id
+    await callback.answer()
     
-    # Проверяем права бота в выбранном чате
     try:
         bot_info = await bot.get_me()
         bot_member = await bot.get_chat_member(chat_id, bot_info.id)
         if bot_member.status not in ("administrator", "creator"):
             await callback.message.edit_text(
                 "⚠️ <b>У бота нет прав администратора в этом чате!</b>\n\n"
-                "Выдайте боту права администратора (минимум: удаление сообщений и блокировка участников), "
+                "Выдайте боту права администратора (удаление сообщений и блокировка участников), "
                 "а затем снова нажмите /start.",
                 parse_mode="HTML"
             )
             return
             
-        # Проверяем, что нажимающий пользователь — админ или владелец
         user_member = await bot.get_chat_member(chat_id, user_id)
         if user_member.status not in ("administrator", "creator"):
-            await callback.answer("⛔ Только администраторы чата могут выполнять настройку!", show_alert=True)
+            await callback.message.answer("⛔ Только администраторы чата могут выполнять настройку!")
             return
             
-        # Синхронизируем список админов и обновляем статус в БД
         await sync_chat_admins(chat_id)
-        conn = sqlite3.connect("gruppas.db")
-        cur = conn.cursor()
-        cur.execute("UPDATE chats SET bot_is_admin = 1 WHERE chat_id = ?", (chat_id,))
-        conn.commit()
-        conn.close()
+        with get_db() as conn:
+            conn.execute("UPDATE chats SET bot_is_admin = 1 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
         
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка проверки прав чата: {e}")
@@ -463,32 +435,33 @@ async def wizard_step_1_check_admin(callback: types.CallbackQuery, state: FSMCon
 
 @dp.message(SetupWizard.waiting_for_rules, F.chat.type == "private")
 async def wizard_step_2_save_rules(message: types.Message, state: FSMContext):
+    if not message.text:
+        await message.answer("⚠️ Пожалуйста, отправьте правила именно текстом.")
+        return
+
     rules_text = message.text.strip()
     data = await state.get_data()
     chat_id = data["chat_id"]
     
-    conn = sqlite3.connect("gruppas.db")
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE chats 
-        SET rules_text = ?, ai_enabled = 1, is_configured = 1 
-        WHERE chat_id = ?
-    """, (rules_text, chat_id))
-    
-    # Также парсим строки в таблицу rules для красивого отображения списком в приложении
-    cur.execute("DELETE FROM rules WHERE chat_id = ?", (chat_id,))
-    for idx, line in enumerate(rules_text.splitlines(), 1):
-        clean_line = line.strip()
-        if clean_line:
-            cur.execute(
-                "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
-                (chat_id, f"§{idx}", clean_line, 60)
-            )
-    conn.commit()
-    
-    chat_row = cur.execute("SELECT title FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
-    chat_title = chat_row[0] if chat_row else f"Чат {chat_id}"
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE chats 
+            SET rules_text = ?, ai_enabled = 1, is_configured = 1 
+            WHERE chat_id = ?
+        """, (rules_text, chat_id))
+        
+        cur.execute("DELETE FROM rules WHERE chat_id = ?", (chat_id,))
+        for idx, line in enumerate(rules_text.splitlines(), 1):
+            clean_line = line.strip()
+            if clean_line:
+                cur.execute(
+                    "INSERT INTO rules (chat_id, code, description, mute_minutes) VALUES (?, ?, ?, ?)",
+                    (chat_id, f"§{idx}", clean_line, 60)
+                )
+        conn.commit()
+        chat_row = cur.execute("SELECT title FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
+        chat_title = chat_row["title"] if chat_row else f"Чат {chat_id}"
     
     await state.clear()
     
@@ -506,7 +479,7 @@ async def wizard_step_2_save_rules(message: types.Message, state: FSMContext):
         reply_markup=kb
     )
 
-# --- КОМАНДЫ В ГРУППОВОМ ЧАТЕ (ДОЛЖНЫ СТОЯТЬ ВЫШЕ ОБЩЕГО ОБРАБОТЧИКА СООБЩЕНИЙ!) ---
+# --- КОМАНДЫ В ГРУППОВОМ ЧАТЕ ---
 @dp.message(Command("profile"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_profile(message: types.Message):
     upsert_member(message.chat.id, message.from_user)
@@ -523,15 +496,14 @@ async def cmd_group_profile(message: types.Message):
 
 @dp.message(Command("rules"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_group_rules(message: types.Message):
-    conn = sqlite3.connect("gruppas.db")
-    row = conn.execute("SELECT rules_text FROM chats WHERE chat_id = ?", (message.chat.id,)).fetchone()
-    conn.close()
-    if row and row[0]:
-        await message.answer(f"📜 <b>Правила чата:</b>\n\n{row[0]}", parse_mode="HTML")
+    with get_db() as conn:
+        row = conn.execute("SELECT rules_text FROM chats WHERE chat_id = ?", (message.chat.id,)).fetchone()
+    if row and row["rules_text"]:
+        await message.answer(f"📜 <b>Правила чата:</b>\n\n{row['rules_text']}", parse_mode="HTML")
     else:
         await message.answer("📜 Правила для этого чата еще не настроены.")
 
-# --- УЧЕТ ВСЕХ УЧАСТНИКОВ + ИИ-МОДЕРАЦИЯ GROK В РЕАЛЬНОМ ВРЕМЕНИ ---
+# --- УЧЕТ УЧАСТНИКОВ + ИИ-МОДЕРАЦИЯ GROK ---
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot:
@@ -540,29 +512,30 @@ async def handle_group_messages(message: types.Message):
     chat_id = message.chat.id
     user = message.from_user
     
-    # 1. Записываем/обновляем участника в базе данных именно этого чата
-    upsert_member(chat_id, user)
+    # Регистрируем чат и участника, даже если бот был добавлен раньше
+    with get_db() as conn:
+        conn.execute("""
+            INSERT OR IGNORE INTO chats (chat_id, title, owner_id)
+            VALUES (?, ?, ?)
+        """, (chat_id, message.chat.title or f"Чат {chat_id}", user.id))
+        upsert_member_with_conn(conn, chat_id, user)
+        conn.commit()
     
-    # 2. Проверяем, включен ли ИИ-модератор и заданы ли правила
     if not message.text:
         return
         
-    conn = sqlite3.connect("gruppas.db")
-    conn.row_factory = sqlite3.Row
-    chat = conn.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
-    member = conn.execute("SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user.id)).fetchone()
-    conn.close()
+    with get_db() as conn:
+        chat = conn.execute("SELECT * FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
+        member = conn.execute("SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user.id)).fetchone()
     
     if not chat or not chat["is_configured"] or not chat["ai_enabled"] or not chat["rules_text"]:
         return
         
-    # Администраторов и создателя чата ИИ не банит
     if member and member["role"] in ("creator", "administrator"):
         return
 
     is_prem = bool(member["is_prem"]) if member else False
     
-    # 3. Отправляем сообщение на проверку нейросети Grok
     verdict = await check_message_with_grok(
         rules_text=chat["rules_text"],
         user_name=user.full_name,
@@ -576,13 +549,11 @@ async def handle_group_messages(message: types.Message):
         reason = verdict.get("reason", "Нарушение правил")
         
         try:
-            # Удаляем нарушающее сообщение
             await message.delete()
         except Exception:
             pass
             
         try:
-            # Выдаем мут (ограничение отправки сообщений)
             until_date = datetime.now(timezone.utc) + timedelta(minutes=mute_mins) if mute_mins > 0 else None
             await bot.restrict_chat_member(
                 chat_id=chat_id,
@@ -609,7 +580,6 @@ async def handle_group_messages(message: types.Message):
 @app.on_event("startup")
 async def startup_event():
     webhook_url = f"{RENDER_URL}/webhook"
-    # Важно: разрешаем update-типы chat_member и my_chat_member, чтобы бот видел вступления в чат!
     await bot.set_webhook(
         webhook_url,
         drop_pending_updates=True,
